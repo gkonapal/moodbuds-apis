@@ -35,6 +35,22 @@ moodbuds:
     customer-access-token-validity: ${MOODBUDS_CUSTOMER_ACCESS_TOKEN_VALIDITY:PT15M}
     customer-refresh-token-validity: ${MOODBUDS_CUSTOMER_REFRESH_TOKEN_VALIDITY:P30D}
     allowed-origins: ${MOODBUDS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+  razorpay:
+    key-id: ${MOODBUDS_RAZORPAY_KEY_ID:}
+    key-secret: ${MOODBUDS_RAZORPAY_KEY_SECRET:}
+    base-url: ${MOODBUDS_RAZORPAY_BASE_URL:https://api.razorpay.com}
+    checkout-name: ${MOODBUDS_RAZORPAY_CHECKOUT_NAME:MoodBuds}
+    checkout-description: ${MOODBUDS_RAZORPAY_CHECKOUT_DESCRIPTION:MoodBuds order}
+    theme-color: ${MOODBUDS_RAZORPAY_THEME_COLOR:#111827}
+  orders:
+    payment-timeout: ${MOODBUDS_PAYMENT_TIMEOUT:PT15M}
+    payment-timeout-batch-size: ${MOODBUDS_PAYMENT_TIMEOUT_BATCH_SIZE:100}
+    payment-timeout-scan-interval: ${MOODBUDS_PAYMENT_TIMEOUT_SCAN_INTERVAL:PT1M}
+    payment-timeout-scan-initial-delay: ${MOODBUDS_PAYMENT_TIMEOUT_SCAN_INITIAL_DELAY:PT30S}
+  refunds:
+    polling-batch-size: ${MOODBUDS_REFUND_POLLING_BATCH_SIZE:100}
+    polling-interval: ${MOODBUDS_REFUND_POLLING_INTERVAL:PT5M}
+    polling-initial-delay: ${MOODBUDS_REFUND_POLLING_INITIAL_DELAY:PT1M}
 
 springdoc:
   swagger-ui:

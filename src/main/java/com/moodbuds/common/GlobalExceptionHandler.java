@@ -17,6 +17,7 @@ import org.springframework.web.method.annotation.HandlerMethodValidationExceptio
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,7 +44,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler({HttpMessageNotReadableException.class, MissingRequestHeaderException.class,
             MissingServletRequestParameterException.class, MethodArgumentTypeMismatchException.class,
-            HandlerMethodValidationException.class})
+            HandlerMethodValidationException.class, ConstraintViolationException.class})
     ResponseEntity<ProblemDetail> handleMalformedRequest(Exception exception) {
         var problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "The request is missing or contains an invalid value");
         problem.setTitle("INVALID_REQUEST");

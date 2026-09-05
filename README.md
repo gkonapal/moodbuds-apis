@@ -116,6 +116,8 @@ All order routes require a customer bearer token:
 - `POST /api/v1/customer/orders`
 - `GET /api/v1/customer/orders?status={optional}&page=0&size=20`
 - `GET /api/v1/customer/orders/{orderNumber}`
+- `GET /api/v1/customer/orders/{orderNumber}/cancellation-eligibility`
+- `POST /api/v1/customer/orders/{orderNumber}/cancel`
 
 Order placement also requires an `Idempotency-Key` header containing 8–128 characters. Repeating the
 same key and request safely returns the original order; reusing it with different address/payment data
@@ -123,10 +125,101 @@ returns a conflict. Placement revalidates prices, availability, stock and coupon
 and product data as JSON snapshots, reserves stock with inventory logs, records coupon usage and clears
 the purchased cart atomically.
 
-Until Razorpay is integrated, online orders remain `PENDING_PAYMENT`, have no fabricated payment row,
-and expose `paymentRequired=true`. Shipping cost is currently zero and `shippingProviderPending=true`.
-COD is rejected until its payment and fulfilment behavior is enabled. Cancellation, reservation release,
-payment callbacks and shipment creation remain intentionally outside this phase.
+Online orders remain `PENDING_PAYMENT` until a captured Razorpay payment is verified and expose
+`paymentRequired=true` beforehand. Shipping cost is currently zero and `shippingProviderPending=true`.
+COD is rejected until its payment and fulfilment behavior is enabled.
+
+Each order freezes a `paymentExpiresAt` timestamp (15 minutes by default). A scheduler scans expired
+unpaid orders every minute, reconciles any open Razorpay attempt first, and cancels only when no captured
+payment is found. Cancellation atomically restores reserved stock, writes `RESERVATION_RELEASE` inventory
+logs, releases coupon usage, expires open local payment attempts, and records order history. Repeated
+cancellation/release processing is idempotent. Customer cancellation currently supports unpaid
+`PENDING_PAYMENT` and `PAYMENT_FAILED` orders; paid orders are rejected with
+`PAYMENT_REFUND_REQUIRED` until provider refunds are implemented.
+
+## Razorpay Payment API
+
+Customer-owned online orders use these authenticated routes:
+
+- `POST /api/v1/customer/orders/{orderNumber}/payments/razorpay`
+- `POST /api/v1/customer/orders/{orderNumber}/payments/razorpay/verify`
+- `GET /api/v1/customer/orders/{orderNumber}/payments/razorpay`
+- `POST /api/v1/customer/orders/{orderNumber}/payments/razorpay/reconcile`
+
+Initiation requires an 8–128 character `Idempotency-Key`. It creates or reuses a Razorpay order using
+only the final amount stored by MoodBuds and returns the public Key ID plus Standard Checkout display
+data. Verification checks the Checkout HMAC signature against the stored Razorpay order ID, fetches the
+payment from Razorpay, validates order, amount and INR currency, and confirms the MoodBuds order only
+when the provider status is `captured`. Reconciliation handles lost browser responses using Razorpay's
+server API. Raw provider responses are stored for audit but are not exposed by customer APIs.
+
+Current orders explicitly freeze shipping at zero using `shippingPricingStatus=FINALIZED` and
+`shippingPricingSource=FREE_SHIPPING_TEMPORARY`. Payment initiation refuses any future order whose
+shipping price is not finalized. The shipping provider phase will replace this source with a selected
+provider-rate snapshot before Razorpay order creation.
+
+Required Test Mode configuration:
+
+```powershell
+$env:MOODBUDS_RAZORPAY_KEY_ID = '<rzp_test key id>'
+$env:MOODBUDS_RAZORPAY_KEY_SECRET = '<test key secret>'
+```
+
+Optional display configuration includes `MOODBUDS_RAZORPAY_CHECKOUT_NAME`,
+`MOODBUDS_RAZORPAY_CHECKOUT_DESCRIPTION`, `MOODBUDS_RAZORPAY_THEME_COLOR`, and
+`MOODBUDS_RAZORPAY_BASE_URL`. Order lifecycle settings are configurable with
+`MOODBUDS_PAYMENT_TIMEOUT`, `MOODBUDS_PAYMENT_TIMEOUT_BATCH_SIZE`,
+`MOODBUDS_PAYMENT_TIMEOUT_SCAN_INTERVAL`, and `MOODBUDS_PAYMENT_TIMEOUT_SCAN_INITIAL_DELAY`.
+Payment webhooks remain deferred; payment reconciliation currently uses the provider API.
+
+## Customer Return API
+
+Returns require a customer bearer token and are available only after delivery:
+
+- `GET /api/v1/customer/orders/{orderNumber}/return-eligibility`
+- `POST /api/v1/customer/orders/{orderNumber}/returns`
+- `GET /api/v1/customer/returns?status={optional}&page=0&size=20`
+- `GET /api/v1/customer/returns/{returnId}`
+
+Return creation requires an 8–128 character `Idempotency-Key`, a customer-owned active pickup
+address, a request reason, and one or more order-item quantities. `OTHER` requires a description.
+Requests are accepted only when order history contains `DELIVERED`, the product's purchase-time return
+window remains open, and the requested quantity does not exceed the quantity not already included in
+a non-rejected return. Product return-window days and the pickup address are snapshotted so later
+catalog or address changes do not alter the request. Creating the first request transitions a delivered
+order to `RETURN_INITIATED`. Refund initiation is a separate admin action after warehouse receipt,
+item inspection, and quality-check approval.
+
+## Razorpay Refund API
+
+Warehouse and refund operations require an admin bearer token with `returns.manage` (or a super-admin
+role):
+
+- `PATCH /api/v1/admin/returns/{returnId}/items/{returnItemId}/inspection`
+- `POST /api/v1/admin/returns/{returnId}/refunds`
+- `POST /api/v1/admin/refunds/{refundId}/reconcile`
+- `GET /api/v1/admin/refunds?page=0&size=20`
+- `GET /api/v1/admin/refunds/{refundId}`
+
+Customers can read only refunds belonging to their own orders:
+
+- `GET /api/v1/customer/refunds?page=0&size=20`
+- `GET /api/v1/customer/refunds/{refundId}`
+
+Refund initiation requires a 10–128 character `Idempotency-Key` and accepts `NORMAL` or `OPTIMUM`
+speed (default `OPTIMUM`). MoodBuds computes the amount in paise from the returned quantities, allocated
+coupon discount, and GST; callers cannot submit an amount. A refund is permitted only after all return
+items are inspected and the return reaches `QUALITY_CHECK_PASSED`. Good-condition inventory is restored
+once, while damaged, used, or missing-tag items are not returned to sellable stock.
+
+The Razorpay refund ID and provider reference are retained. Pending refunds are reconciled every five
+minutes by default, and the manual reconcile endpoint handles immediate status refreshes. Processed
+refunds update the payment and order to `PARTIALLY_REFUNDED` or `REFUNDED` and complete the return.
+A provider-declared failed refund can be initiated again with a new idempotency key. Refund webhooks are
+deferred until the provider-webhook phase.
+
+Optional scheduler settings are `MOODBUDS_REFUND_POLLING_BATCH_SIZE`,
+`MOODBUDS_REFUND_POLLING_INTERVAL`, and `MOODBUDS_REFUND_POLLING_INITIAL_DELAY`.
 
 ## Public Catalog API
 

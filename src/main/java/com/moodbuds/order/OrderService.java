@@ -41,15 +41,18 @@ public class OrderService {
     private final CartService carts;
     private final CouponService coupons;
     private final CustomerProfileService customers;
+    private final OrderLifecycleProperties lifecycleProperties;
 
     public OrderService(JdbcClient jdbc, NamedParameterJdbcTemplate namedJdbc, ObjectMapper objectMapper,
-                        CartService carts, CouponService coupons, CustomerProfileService customers) {
+                        CartService carts, CouponService coupons, CustomerProfileService customers,
+                        OrderLifecycleProperties lifecycleProperties) {
         this.jdbc = jdbc;
         this.namedJdbc = namedJdbc;
         this.objectMapper = objectMapper;
         this.carts = carts;
         this.coupons = coupons;
         this.customers = customers;
+        this.lifecycleProperties = lifecycleProperties;
     }
 
     @Transactional
@@ -135,6 +138,7 @@ public class OrderService {
         String statusClause = status == null ? "" : " AND o.status=:status";
         var query = jdbc.sql("""
                 SELECT o.order_number,o.status,o.payment_method,o.total_amount,o.created_at,o.updated_at,
+                       o.payment_expires_at,
                        COALESCE(SUM(oi.quantity),0) total_quantity,COUNT(oi.id) item_count,
                        (SELECT JSON_UNQUOTE(JSON_EXTRACT(oi2.product_snapshot,'$.primaryImageUrl'))
                         FROM order_items oi2 WHERE oi2.order_id=o.id ORDER BY oi2.id LIMIT 1) primary_image_url
@@ -149,10 +153,11 @@ public class OrderService {
             count = count.param("status", status.name());
         }
         var content = query.query((rs, rowNum) -> new OrderSummaryResponse(rs.getString("order_number"),
-                OrderStatus.valueOf(rs.getString("status")), PaymentMethod.valueOf(rs.getString("payment_method")),
+                OrderStatus.valueOf(rs.getString("status")), paymentMethod(rs.getString("payment_method")),
                 rs.getInt("item_count"), rs.getInt("total_quantity"), rs.getString("primary_image_url"),
-                rs.getLong("total_amount"), paymentRequired(rs.getString("status"), rs.getString("payment_method")),
-                instant(rs, "created_at"), instant(rs, "updated_at"))).list();
+                rs.getLong("total_amount"), paymentRequired(rs.getString("status"), rs.getString("payment_method"),
+                        instant(rs, "payment_expires_at")),
+                instant(rs, "created_at"), instant(rs, "updated_at"), instant(rs, "payment_expires_at"))).list();
         return PageResponse.of(content, boundedPage, boundedSize, count.query(Long.class).single());
     }
 
@@ -184,10 +189,12 @@ public class OrderService {
                         rs.getString("method"), rs.getString("status"), rs.getLong("amount"),
                         rs.getString("currency"), instant(rs, "initiated_at"), nullableInstant(rs, "completed_at"))).list();
         return new OrderDetailResponse(order.orderNumber(), OrderStatus.valueOf(order.status()),
-                PaymentMethod.valueOf(order.paymentMethod()), json(order.addressSnapshot()), order.couponCode(),
+                paymentMethod(order.paymentMethod()), json(order.addressSnapshot()), order.couponCode(),
                 order.subtotal(), order.couponDiscount(), order.shippingCost(), order.gstAmount(), order.totalAmount(),
-                paymentRequired(order.status(), order.paymentMethod()), true, items, history, payments,
-                order.createdAt(), order.updatedAt());
+                paymentRequired(order.status(), order.paymentMethod(), order.paymentExpiresAt()), true,
+                order.shippingPricingStatus(), order.shippingPricingSource(), items, history, payments,
+                order.createdAt(), order.updatedAt(), order.paymentExpiresAt(), order.cancelledAt(),
+                order.cancellationReason(), directlyCancellable(order.status()));
     }
 
     private long insertOrder(long customerId, String key, String fingerprint, PlaceOrderRequest request,
@@ -197,17 +204,20 @@ public class OrderService {
         var params = new MapSqlParameterSource().addValue("orderNumber", orderNumber)
                 .addValue("userId", customerId).addValue("key", key).addValue("fingerprint", fingerprint)
                 .addValue("addressId", request.addressId()).addValue("address", jsonString(address))
-                .addValue("paymentMethod", request.paymentMethod().name())
+                .addValue("paymentMethod", request.paymentMethod() == null ? null : request.paymentMethod().name(), Types.VARCHAR)
                 .addValue("couponId", couponState.applied() ? couponState.coupon().id() : null, Types.BIGINT)
                 .addValue("subtotal", totals.sellingSubtotal()).addValue("couponDiscount", totals.couponDiscount())
-                .addValue("gst", totals.gstAmount()).addValue("total", totals.grandTotal());
+                .addValue("gst", totals.gstAmount()).addValue("total", totals.grandTotal())
+                .addValue("paymentExpiresAt", Instant.now().plus(lifecycleProperties.paymentTimeout()));
         var keys = new GeneratedKeyHolder();
         namedJdbc.update("""
                 INSERT INTO orders(order_number,user_id,idempotency_key,idempotency_fingerprint,status,
                     shipping_address_id,shipping_address_snapshot_full,payment_method,coupon_id,subtotal,
-                    coupon_discount,shipping_cost,gst_amount,total_amount,created_at,updated_at)
+                    coupon_discount,shipping_cost,shipping_pricing_status,shipping_pricing_source,
+                    gst_amount,total_amount,payment_expires_at,created_at,updated_at)
                 VALUES(:orderNumber,:userId,:key,:fingerprint,'PENDING_PAYMENT',:addressId,:address,
-                    :paymentMethod,:couponId,:subtotal,:couponDiscount,0,:gst,:total,UTC_TIMESTAMP(),UTC_TIMESTAMP())
+                    :paymentMethod,:couponId,:subtotal,:couponDiscount,0,'FINALIZED','FREE_SHIPPING_TEMPORARY',
+                    :gst,:total,:paymentExpiresAt,UTC_TIMESTAMP(),UTC_TIMESTAMP())
                 """, params, keys, new String[]{"id"});
         return keys.getKey().longValue();
     }
@@ -215,15 +225,22 @@ public class OrderService {
     private void insertOrderItem(long orderId, CartItemResponse item, long gst) {
         jdbc.sql("""
                 INSERT INTO order_items(order_id,product_id,product_snapshot,size,quantity,unit_price,
-                    unit_discount_price,gst_rate_percentage,gst_amount,line_total)
-                VALUES(:orderId,:productId,:snapshot,:size,:quantity,:price,:discount,:gstRate,:gst,:lineTotal)
+                    unit_discount_price,gst_rate_percentage,gst_amount,line_total,return_window_days_snapshot)
+                VALUES(:orderId,:productId,:snapshot,:size,:quantity,:price,:discount,:gstRate,:gst,:lineTotal,
+                    :returnWindowDays)
                 """).param("orderId", orderId).param("productId", item.productId())
                 .param("snapshot", jsonString(productSnapshot(item.productId())))
                 .param("size", item.size()).param("quantity", item.quantity())
                 .param("price", item.currentUnitPrice())
                 .param("discount", item.currentUnitDiscountPrice(), Types.INTEGER)
                 .param("gstRate", item.gstRatePercentage()).param("gst", gst)
-                .param("lineTotal", item.lineSubtotal()).update();
+                .param("lineTotal", item.lineSubtotal()).param("returnWindowDays", returnWindowDays(item.productId()))
+                .update();
+    }
+
+    private int returnWindowDays(long productId) {
+        return jdbc.sql("SELECT return_window_days FROM products WHERE id=:id")
+                .param("id", productId).query(Integer.class).single();
     }
 
     private Object productSnapshot(long productId) {
@@ -276,7 +293,9 @@ public class OrderService {
                 rs.getString("payment_method"), rs.getString("shipping_address_snapshot_full"),
                 rs.getString("coupon_code"), rs.getLong("subtotal"), rs.getLong("coupon_discount"),
                 rs.getLong("shipping_cost"), rs.getLong("gst_amount"), rs.getLong("total_amount"),
-                instant(rs, "created_at"), instant(rs, "updated_at"));
+                rs.getString("shipping_pricing_status"), rs.getString("shipping_pricing_source"),
+                instant(rs, "created_at"), instant(rs, "updated_at"), instant(rs, "payment_expires_at"),
+                nullableInstant(rs, "cancelled_at"), rs.getString("cancellation_reason"));
     }
 
     private JsonNode json(String value) {
@@ -296,15 +315,23 @@ public class OrderService {
     private static String fingerprint(PlaceOrderRequest request) {
         try {
             byte[] digest = MessageDigest.getInstance("SHA-256").digest(
-                    (request.addressId() + "|" + request.paymentMethod().name()).getBytes(StandardCharsets.UTF_8));
+                    (request.addressId() + "|" + (request.paymentMethod() == null ? "RAZORPAY" : request.paymentMethod().name()))
+                            .getBytes(StandardCharsets.UTF_8));
             return HexFormat.of().formatHex(digest);
         } catch (java.security.NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 unavailable", exception);
         }
     }
 
-    private static boolean paymentRequired(String status, String method) {
-        return !"COD".equals(method) && ("PENDING_PAYMENT".equals(status) || "PAYMENT_FAILED".equals(status));
+    private static boolean paymentRequired(String status, String method, Instant paymentExpiresAt) {
+        return !"COD".equals(method) && paymentExpiresAt.isAfter(Instant.now())
+                && ("PENDING_PAYMENT".equals(status) || "PAYMENT_FAILED".equals(status));
+    }
+    private static boolean directlyCancellable(String status) {
+        return "PENDING_PAYMENT".equals(status) || "PAYMENT_FAILED".equals(status);
+    }
+    private static PaymentMethod paymentMethod(String method) {
+        return method == null ? null : PaymentMethod.valueOf(method);
     }
     private static Instant instant(ResultSet rs, String field) throws SQLException { return rs.getTimestamp(field).toInstant(); }
     private static Instant nullableInstant(ResultSet rs, String field) throws SQLException {
@@ -319,5 +346,7 @@ public class OrderService {
     private record OrderRow(long id, String orderNumber, String status, String paymentMethod,
                             String addressSnapshot, String couponCode, long subtotal, long couponDiscount,
                             long shippingCost, long gstAmount, long totalAmount,
-                            Instant createdAt, Instant updatedAt) {}
+                            String shippingPricingStatus, String shippingPricingSource,
+                            Instant createdAt, Instant updatedAt, Instant paymentExpiresAt,
+                            Instant cancelledAt, String cancellationReason) {}
 }

@@ -5,6 +5,7 @@ import static com.moodbuds.order.api.OrderDtos.*;
 import com.moodbuds.common.PageResponse;
 import com.moodbuds.customer.CurrentCustomer;
 import com.moodbuds.order.OrderService;
+import com.moodbuds.order.OrderCancellationService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -30,9 +31,11 @@ import org.springframework.web.bind.annotation.RestController;
 @Tag(name = "Customer Orders")
 public class CustomerOrderController {
     private final OrderService orders;
+    private final OrderCancellationService cancellations;
 
-    public CustomerOrderController(OrderService orders) {
+    public CustomerOrderController(OrderService orders, OrderCancellationService cancellations) {
         this.orders = orders;
+        this.cancellations = cancellations;
     }
 
     @PostMapping
@@ -57,5 +60,19 @@ public class CustomerOrderController {
     @Operation(summary = "Get a customer-owned order with items, status history, and safe payment summaries")
     OrderDetailResponse get(@AuthenticationPrincipal Jwt jwt, @PathVariable String orderNumber) {
         return orders.get(CurrentCustomer.id(jwt), orderNumber);
+    }
+
+    @GetMapping("/{orderNumber}/cancellation-eligibility")
+    @Operation(summary = "Check whether a customer-owned order can currently be cancelled")
+    CancellationEligibilityResponse cancellationEligibility(@AuthenticationPrincipal Jwt jwt,
+                                                              @PathVariable String orderNumber) {
+        return cancellations.eligibility(CurrentCustomer.id(jwt), orderNumber);
+    }
+
+    @PostMapping("/{orderNumber}/cancel")
+    @Operation(summary = "Cancel an unpaid customer-owned order and release its reservations")
+    OrderDetailResponse cancel(@AuthenticationPrincipal Jwt jwt, @PathVariable String orderNumber,
+                               @Valid @RequestBody CancelOrderRequest request) {
+        return cancellations.cancel(CurrentCustomer.id(jwt), orderNumber, request);
     }
 }
