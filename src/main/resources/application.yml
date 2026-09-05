@@ -1,0 +1,43 @@
+spring:
+  application:
+    name: moodbuds-api
+  datasource:
+    url: jdbc:mysql://${MOODBUDS_DB_HOST:localhost}:${MOODBUDS_DB_PORT:3306}/${MOODBUDS_DB_NAME:mb}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: ${MOODBUDS_DB_USERNAME:root}
+    password: ${MOODBUDS_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 0
+    validate-migration-naming: true
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: UTC
+
+server:
+  port: ${PORT:8080}
+  error:
+    include-message: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+moodbuds:
+  security:
+    jwt-secret: ${MOODBUDS_JWT_SECRET}
+    token-validity: ${MOODBUDS_ADMIN_TOKEN_VALIDITY:PT8H}
+    customer-access-token-validity: ${MOODBUDS_CUSTOMER_ACCESS_TOKEN_VALIDITY:PT15M}
+    customer-refresh-token-validity: ${MOODBUDS_CUSTOMER_REFRESH_TOKEN_VALIDITY:P30D}
+    allowed-origins: ${MOODBUDS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+  api-docs:
+    path: /v3/api-docs
