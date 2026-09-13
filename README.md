@@ -223,7 +223,7 @@ Optional scheduler settings are `MOODBUDS_REFUND_POLLING_BATCH_SIZE`,
 
 ## Public Catalog API
 
-All catalog endpoints are anonymous, return active records only, and express money in paise.
+All catalog endpoints are anonymous, return published active records only, and express money in paise.
 
 - `GET /api/v1/home?collectionSize=12`
 - `GET /api/v1/categories`
@@ -242,6 +242,37 @@ Product search accepts `q`, `category`, `subcategory`, `mood`, `productSize`, `c
 `minPrice`, `maxPrice`, `inStock`, `featured`, `newArrival`, `bestSeller`, `page`, and
 `size`. Supported sort values are `newest`, `price-asc`, `price-desc`, `name-asc`, and
 `featured`. Public availability intentionally exposes only an in-stock boolean, not stock counts.
+
+## Product publishing and local media
+
+The admin product form can save the entire product atomically, including core fields, sizes, images,
+moods, and an optional product-specific size chart:
+
+- `POST /api/v1/admin/products/complete`
+- `PUT /api/v1/admin/products/{id}/complete`
+- `GET /api/v1/admin/products/{id}/full`
+- `POST /api/v1/admin/products/{id}/publish`
+- `POST /api/v1/admin/products/{id}/unpublish`
+- `POST /api/v1/admin/products/{id}/archive`
+
+Use `publicationAction` as `SAVE_DRAFT` or `PUBLISH`. Drafts may omit child collections. Publishing
+requires active category/subcategory/GST references, at least one mood, an available size with positive
+stock, at least three images, and exactly one primary image. Archive is terminal. Existing separate
+product-management endpoints remain available for compatibility. Stock changes submitted through the
+consolidated API are recorded in the inventory log.
+
+Image files are currently stored on the Windows/local filesystem. Upload first, then use the returned
+media IDs in the consolidated request:
+
+- `POST /api/v1/admin/media/images` with multipart field `files` (JPEG, PNG, or WebP)
+- `GET /api/v1/admin/media/{mediaId}`
+- `DELETE /api/v1/admin/media/{mediaId}` (only while unused)
+- `GET /api/v1/media/{mediaId}/content` (public image content)
+
+The returned URL is a stable public endpoint, not a filesystem path. Storage defaults to `storage/media`.
+Configure it with `MOODBUDS_MEDIA_ROOT`; optional upload limits are `MOODBUDS_MEDIA_MAX_IMAGE_BYTES`,
+`MOODBUDS_MEDIA_MAX_IMAGES_PER_UPLOAD`, `MOODBUDS_MEDIA_MAX_FILE_SIZE`, and
+`MOODBUDS_MEDIA_MAX_REQUEST_SIZE`.
 
 ## Public Mood Quiz API
 
@@ -291,7 +322,8 @@ Optional variables include `MOODBUDS_DB_HOST`, `MOODBUDS_DB_PORT`, `MOODBUDS_DB_
 mvn spring-boot:run
 ```
 
-Flyway baselines the pre-existing database and then adds `admin_users.username` and the approved slug columns.
+Flyway baselines the pre-existing database and applies the application-owned migrations, including admin
+usernames, slugs, media assets, and product publication state.
 It also inserts the `SUPER_ADMIN` role and permission catalogue, but never creates an administrator account.
 
 Swagger UI is available at `http://localhost:8080/swagger-ui.html` after startup.

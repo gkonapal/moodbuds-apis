@@ -43,7 +43,7 @@ public class CartService {
         if (cart == null) return emptyCart();
         List<ItemRow> rows = jdbc.sql("""
                 SELECT ci.id,ci.product_id,ci.size,ci.quantity,ci.unit_price,ci.unit_discount_price,
-                       p.sku,p.slug,p.name,p.price,p.discount_price,p.is_active,
+                       p.sku,p.slug,p.name,p.price,p.discount_price,(p.is_active=1 AND p.publication_status='PUBLISHED') is_active,
                        c.is_active category_active,sc.is_active subcategory_active,
                        g.rate_percentage,g.is_active gst_active,
                        ps.id product_size_id,ps.stock_quantity,ps.is_available size_active,
@@ -267,7 +267,7 @@ public class CartService {
                 JOIN subcategories sc ON sc.id=p.subcategory_id AND sc.is_active=1
                 JOIN gst_rates g ON g.id=p.gst_rate_id AND g.is_active=1
                 JOIN product_sizes ps ON ps.product_id=p.id AND ps.size=:size
-                WHERE p.is_active=1 AND
+                WHERE p.is_active=1 AND p.publication_status='PUBLISHED' AND
                 """ + predicate + " FOR UPDATE";
     }
 

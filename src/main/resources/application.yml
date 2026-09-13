@@ -16,6 +16,10 @@ spring:
   jackson:
     default-property-inclusion: non_null
     time-zone: UTC
+  servlet:
+    multipart:
+      max-file-size: ${MOODBUDS_MEDIA_MAX_FILE_SIZE:5MB}
+      max-request-size: ${MOODBUDS_MEDIA_MAX_REQUEST_SIZE:50MB}
 
 server:
   port: ${PORT:8080}
@@ -51,6 +55,10 @@ moodbuds:
     polling-batch-size: ${MOODBUDS_REFUND_POLLING_BATCH_SIZE:100}
     polling-interval: ${MOODBUDS_REFUND_POLLING_INTERVAL:PT5M}
     polling-initial-delay: ${MOODBUDS_REFUND_POLLING_INITIAL_DELAY:PT1M}
+  media:
+    root: ${MOODBUDS_MEDIA_ROOT:storage/media}
+    max-image-size-bytes: ${MOODBUDS_MEDIA_MAX_IMAGE_BYTES:5242880}
+    max-images-per-upload: ${MOODBUDS_MEDIA_MAX_IMAGES_PER_UPLOAD:10}
 
 springdoc:
   swagger-ui:

@@ -39,7 +39,7 @@ public class WishlistService {
                 SELECT wi.id,wi.product_id,wi.size,wi.added_at,p.sku,p.slug,p.name,p.price,p.discount_price,
                        (SELECT pi.image_url FROM product_images pi WHERE pi.product_id=p.id
                         ORDER BY pi.is_primary DESC,pi.id LIMIT 1) primary_image_url,
-                       (p.is_active=1 AND c.is_active=1 AND sc.is_active=1) product_available,
+                       (p.is_active=1 AND p.publication_status='PUBLISHED' AND c.is_active=1 AND sc.is_active=1) product_available,
                        CASE WHEN wi.size IS NULL
                             THEN EXISTS(SELECT 1 FROM product_sizes ps WHERE ps.product_id=p.id
                                         AND ps.is_available=1 AND ps.stock_quantity>0)
@@ -114,7 +114,7 @@ public class WishlistService {
         jdbc.sql("SELECT id FROM users WHERE id=:id FOR UPDATE").param("id", customerId).query(Long.class).single();
         var item = jdbc.sql("""
                 SELECT wi.id,wi.size,p.id product_id,p.slug,p.price,p.discount_price,
-                       p.is_active,c.is_active category_active,sc.is_active subcategory_active
+                       (p.is_active=1 AND p.publication_status='PUBLISHED') is_active,c.is_active category_active,sc.is_active subcategory_active
                 FROM wishlist_items wi
                 JOIN wishlists w ON w.id=wi.wishlist_id
                 JOIN products p ON p.id=wi.product_id
@@ -204,7 +204,7 @@ public class WishlistService {
                 SELECT p.id,p.slug FROM products p
                 JOIN categories c ON c.id=p.category_id AND c.is_active=1
                 JOIN subcategories sc ON sc.id=p.subcategory_id AND sc.is_active=1
-                WHERE p.slug=:slug AND p.is_active=1
+                WHERE p.slug=:slug AND p.is_active=1 AND p.publication_status='PUBLISHED'
                 """).param("slug", slug).query((rs, rowNum) -> new Product(
                         rs.getLong("id"), rs.getString("slug"))).optional()
                 .orElseThrow(() -> ApiException.notFound("Product"));

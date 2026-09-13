@@ -24,7 +24,8 @@ public class ProductAuxiliaryController {
     @PreAuthorize("hasAuthority('catalog.manage') or hasRole('SUPER_ADMIN')")
     @Transactional
     Object productChart(@PathVariable long productId, @RequestBody ChartRequest body, @AuthenticationPrincipal Jwt jwt) {
-        if (jdbc.sql("SELECT COUNT(*) FROM products WHERE id=:id").param("id",productId).query(Integer.class).single()==0) throw ApiException.notFound("Product");
+        String status=jdbc.sql("SELECT publication_status FROM products WHERE id=:id").param("id",productId).query(String.class).optional().orElseThrow(()->ApiException.notFound("Product"));
+        if("ARCHIVED".equals(status)) throw new ApiException(HttpStatus.CONFLICT,"PRODUCT_ARCHIVED","An archived product cannot be edited");
         jdbc.sql("""
           INSERT INTO size_charts(product_id,subcategory_id,chart_image_url,created_at,updated_at)
           VALUES(:product,NULL,:url,UTC_TIMESTAMP(),UTC_TIMESTAMP())

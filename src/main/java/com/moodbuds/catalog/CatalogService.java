@@ -23,7 +23,7 @@ public class CatalogService {
             FROM products p
             JOIN categories c ON c.id=p.category_id AND c.is_active=1
             JOIN subcategories sc ON sc.id=p.subcategory_id AND sc.is_active=1
-            WHERE p.is_active=1
+            WHERE p.is_active=1 AND p.publication_status='PUBLISHED'
             """;
 
     private final JdbcClient jdbc;
@@ -44,7 +44,7 @@ public class CatalogService {
         return jdbc.sql("""
                 SELECT c.id,c.name,c.slug,
                        COUNT(DISTINCT CASE WHEN sc.is_active=1 THEN sc.id END) subcategory_count,
-                       COUNT(DISTINCT CASE WHEN p.is_active=1 AND sc.is_active=1 THEN p.id END) product_count
+                       COUNT(DISTINCT CASE WHEN p.is_active=1 AND p.publication_status='PUBLISHED' AND sc.is_active=1 THEN p.id END) product_count
                 FROM categories c
                 LEFT JOIN subcategories sc ON sc.category_id=c.id
                 LEFT JOIN products p ON p.category_id=c.id AND p.subcategory_id=sc.id
@@ -57,7 +57,7 @@ public class CatalogService {
     public CategoryDetail category(String slug) {
         var category = jdbc.sql("""
                 SELECT c.id,c.name,c.slug,
-                       COUNT(DISTINCT CASE WHEN p.is_active=1 AND sc.is_active=1 THEN p.id END) product_count
+                       COUNT(DISTINCT CASE WHEN p.is_active=1 AND p.publication_status='PUBLISHED' AND sc.is_active=1 THEN p.id END) product_count
                 FROM categories c
                 LEFT JOIN subcategories sc ON sc.category_id=c.id
                 LEFT JOIN products p ON p.category_id=c.id AND p.subcategory_id=sc.id
@@ -78,7 +78,7 @@ public class CatalogService {
     public SubcategorySummary subcategory(String slug) {
         return jdbc.sql("""
                 SELECT sc.id,sc.name,sc.slug,c.id category_id,c.name category_name,c.slug category_slug,
-                       COUNT(DISTINCT CASE WHEN p.is_active=1 THEN p.id END) product_count
+                       COUNT(DISTINCT CASE WHEN p.is_active=1 AND p.publication_status='PUBLISHED' THEN p.id END) product_count
                 FROM subcategories sc
                 JOIN categories c ON c.id=sc.category_id AND c.is_active=1
                 LEFT JOIN products p ON p.subcategory_id=sc.id
@@ -91,7 +91,7 @@ public class CatalogService {
     public List<MoodSummary> moods() {
         return jdbc.sql("""
                 SELECT m.id,m.name,m.slug,m.tagline,m.personality_tagline,m.banner_image_url,m.color,
-                       COUNT(DISTINCT CASE WHEN p.is_active=1 AND c.is_active=1 AND sc.is_active=1 THEN p.id END) product_count
+                       COUNT(DISTINCT CASE WHEN p.is_active=1 AND p.publication_status='PUBLISHED' AND c.is_active=1 AND sc.is_active=1 THEN p.id END) product_count
                 FROM moods m
                 LEFT JOIN product_mood_tags pmt ON pmt.mood_id=m.id
                 LEFT JOIN products p ON p.id=pmt.product_id
@@ -132,7 +132,7 @@ public class CatalogService {
                 JOIN categories c ON c.id=p.category_id AND c.is_active=1
                 JOIN subcategories sc ON sc.id=p.subcategory_id AND sc.is_active=1
                 LEFT JOIN gst_rates g ON g.id=p.gst_rate_id AND g.is_active=1
-                WHERE p.slug=:slug AND p.is_active=1
+                WHERE p.slug=:slug AND p.is_active=1 AND p.publication_status='PUBLISHED'
                 """).param("slug", slug).query((rs, rowNum) -> productBase(rs)).optional()
                 .orElseThrow(() -> ApiException.notFound("Product"));
         long id = base.id();
@@ -182,7 +182,7 @@ public class CatalogService {
     private List<SubcategorySummary> subcategories(long categoryId) {
         return jdbc.sql("""
                 SELECT sc.id,sc.name,sc.slug,c.id category_id,c.name category_name,c.slug category_slug,
-                       COUNT(DISTINCT CASE WHEN p.is_active=1 THEN p.id END) product_count
+                       COUNT(DISTINCT CASE WHEN p.is_active=1 AND p.publication_status='PUBLISHED' THEN p.id END) product_count
                 FROM subcategories sc
                 JOIN categories c ON c.id=sc.category_id AND c.is_active=1
                 LEFT JOIN products p ON p.subcategory_id=sc.id
@@ -254,7 +254,7 @@ public class CatalogService {
                 SELECT p.id,p.slug FROM products p
                 JOIN categories c ON c.id=p.category_id AND c.is_active=1
                 JOIN subcategories sc ON sc.id=p.subcategory_id AND sc.is_active=1
-                WHERE p.slug=:slug AND p.is_active=1
+                WHERE p.slug=:slug AND p.is_active=1 AND p.publication_status='PUBLISHED'
                 """).param("slug", slug).query((rs, rowNum) -> new ProductIdentity(
                         rs.getLong("id"), rs.getString("slug"))).optional()
                 .orElseThrow(() -> ApiException.notFound("Product"));

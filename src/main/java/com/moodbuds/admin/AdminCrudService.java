@@ -70,6 +70,9 @@ public class AdminCrudService {
     public Map<String,Object> update(String resource,long id,Map<String,Object> body,long actorId) {
         var def=registry.require(resource);
         var old=get(resource,id);
+        if ("products".equals(def.table()) && "ARCHIVED".equals(String.valueOf(old.get("publication_status")))) {
+            throw new ApiException(org.springframework.http.HttpStatus.CONFLICT,"PRODUCT_ARCHIVED","An archived product cannot be edited");
+        }
         var values=allowedValues(def,body);
         if (def.slugged() && (values.containsKey("slug") || values.containsKey("name") && old.get("slug")==null)) {
             String requested=values.containsKey("slug")?string(values.get("slug")):string(old.get("slug"));
@@ -90,7 +93,7 @@ public class AdminCrudService {
         var def=registry.require(resource);
         var old=get(resource,id);
         int changed = def.softDelete()
-                ? jdbc.sql("UPDATE "+def.table()+" SET is_active=0 WHERE id=:id").param("id",id).update()
+                ? jdbc.sql("UPDATE "+def.table()+" SET is_active=0"+("products".equals(def.table())?",publication_status='ARCHIVED'":"")+" WHERE id=:id").param("id",id).update()
                 : jdbc.sql("DELETE FROM "+def.table()+" WHERE id=:id").param("id",id).update();
         if(changed==0) throw ApiException.notFound(resource);
         audit.record(actorId,resource+"."+(def.softDelete()?"deactivated":"deleted"),def.table(),id,old,null);
