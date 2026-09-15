@@ -89,18 +89,24 @@ issues without silently deleting customer items.
 Currently active and globally available public coupons can be discovered anonymously:
 
 - `GET /api/v1/coupons`
+- `GET /api/v1/coupons/homepage`
 - `GET /api/v1/coupons/{code}`
 
 These routes require a customer bearer token:
 
+- `GET /api/v1/customer/coupons`
+- `GET /api/v1/customer/coupons/homepage`
 - `GET /api/v1/customer/cart/coupon`
 - `POST /api/v1/customer/cart/coupon`
 - `POST /api/v1/customer/cart/coupon/validate`
 - `DELETE /api/v1/customer/cart/coupon`
 - `POST /api/v1/customer/checkout/preview`
 
-Coupon application enforces active dates, minimum order value, percentage caps, global usage and
-per-customer usage. Private coupons are not listed publicly but may be applied by exact code. Flat
+Coupon application enforces active dates, minimum order value, percentage caps, global usage,
+per-customer usage, first-order eligibility, and selected-customer assignments. Private-code coupons
+are not listed publicly but may be applied by exact code; assigned coupons are visible and usable only
+by active assigned customers. The authenticated coupon catalogue excludes ineligible or exhausted offers.
+Flat
 coupon values are converted from the database's rupee decimal to API paise; all returned totals remain
 paise. The current schema has no product/category coupon applicability tables, so coupons apply to the
 whole selling subtotal. GST is recalculated after proportionally allocating the coupon discount.
@@ -108,6 +114,12 @@ whole selling subtotal. GST is recalculated after proportionally allocating the 
 Checkout preview validates an address owned by the customer and revalidates the cart and coupon.
 `readyForOrderCreation` reflects local cart/address readiness, while `pendingIntegrations` identifies
 shipping and payment work that remains. It does not invoke either provider.
+
+Coupon administration uses typed endpoints under `/api/v1/admin/coupons`. Administrators with
+`coupons.manage` (and super administrators) can create and edit coupon rules, activate/deactivate offers,
+inspect usage, and assign `ASSIGNED_USERS` coupons to selected customers with optional usage overrides,
+refund references, and assignment reasons. `MOOD300` is seeded as the single public, one-use,
+first-order homepage offer.
 
 ## Customer Order API
 
@@ -302,8 +314,8 @@ The answer payload is:
 }
 ```
 
-Q1 selects one of the four paths for Q2-Q5; Q6-Q10 are universal. Revising an earlier
-answer discards all later answers so branch and score state cannot become inconsistent.
+The quiz contains five questions. Q1 selects one of the four paths for Q2-Q5. Revising an
+earlier answer discards all later answers so branch and score state cannot become inconsistent.
 
 ## Required environment variables
 
@@ -328,28 +340,21 @@ It also inserts the `SUPER_ADMIN` role and permission catalogue, but never creat
 
 Swagger UI is available at `http://localhost:8080/swagger-ui.html` after startup.
 
-## Insert the first super admin
+## Insert or reset the first super admin
 
-Generate a BCrypt password hash without placing the password in source files:
+Use the bootstrap utility so the password is BCrypt-hashed without being placed in source files or migrations:
 
 ```powershell
-$env:MOODBUDS_ADMIN_PASSWORD_TO_HASH = '<chosen admin password>'
-mvn -q exec:java -Dexec.mainClass=com.moodbuds.tools.AdminPasswordHashTool
-Remove-Item Env:MOODBUDS_ADMIN_PASSWORD_TO_HASH
+$env:MOODBUDS_ADMIN_USERNAME = 'owner'
+$env:MOODBUDS_ADMIN_PASSWORD = '<chosen admin password>'
+$env:MOODBUDS_ADMIN_FULL_NAME = 'MoodBuds Owner'
+mvn -q exec:java -Dexec.mainClass=com.moodbuds.tools.SuperAdminBootstrapTool
+Remove-Item Env:MOODBUDS_ADMIN_USERNAME, Env:MOODBUDS_ADMIN_PASSWORD, Env:MOODBUDS_ADMIN_FULL_NAME
 ```
 
-Then insert the account using the generated hash:
-
-```sql
-INSERT INTO admin_users
-    (username, role_id, email, password_hash, full_name, mobile, is_active,
-     require_2fa, failed_attempts, created_at, updated_at)
-SELECT
-    'owner', id, NULL, '<bcrypt-hash>', 'MoodBuds Owner', NULL, 1,
-    0, 0, UTC_TIMESTAMP(), UTC_TIMESTAMP()
-FROM admin_roles
-WHERE name = 'SUPER_ADMIN';
-```
+The utility creates the account when missing and safely resets its password, role, active state,
+failed-login count, and lock state when the username already exists. It uses the same
+`MOODBUDS_DB_*` connection variables as the application.
 
 ## API conventions
 

@@ -30,13 +30,13 @@ class QuizControllerTest {
         var question = new QuestionResponse(1, 1, "What is your vibe?",
                 List.of(new OptionResponse(1001, "A", "Powerful", 1)));
         when(service.createSession(any())).thenReturn(new CreateSessionResponse(
-                "session-id", "a-valid-session-token-value", "IN_PROGRESS", 0, 10, 0,
+                "session-id", "a-valid-session-token-value", "IN_PROGRESS", 0, 5, 0,
                 LocalDateTime.parse("2026-08-28T05:30:00"), question));
 
         mockMvc.perform(post("/api/v1/quiz/sessions"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.sessionId").value("session-id"))
-                .andExpect(jsonPath("$.totalQuestions").value(10))
+                .andExpect(jsonPath("$.totalQuestions").value(5))
                 .andExpect(jsonPath("$.nextQuestion.order").value(1));
     }
 

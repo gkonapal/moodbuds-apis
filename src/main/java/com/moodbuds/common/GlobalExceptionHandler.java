@@ -12,6 +12,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -54,6 +55,14 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<ProblemDetail> handleConflict(DataIntegrityViolationException exception) {
+        String cause = exception.getMostSpecificCause().getMessage();
+        if (cause != null && (cause.contains("uq_coupons_code") || cause.contains("coupons.code")
+                || cause.contains("for key 'code'") || cause.contains("for key 'coupons.code'"))) {
+            var problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT,
+                    "That coupon code already exists. Open the existing coupon and edit it instead.");
+            problem.setTitle("COUPON_CODE_EXISTS");
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
+        }
         var problem = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, "The request conflicts with existing data or relationships");
         problem.setTitle("DATA_CONFLICT");
         return ResponseEntity.status(HttpStatus.CONFLICT).body(problem);
@@ -71,6 +80,14 @@ public class GlobalExceptionHandler {
         var problem = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, "You do not have permission to perform this operation");
         problem.setTitle("ACCESS_DENIED");
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(problem);
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    ResponseEntity<ProblemDetail> handleMethodNotAllowed(HttpRequestMethodNotSupportedException exception) {
+        var problem = ProblemDetail.forStatusAndDetail(HttpStatus.METHOD_NOT_ALLOWED,
+                "This operation is not supported");
+        problem.setTitle("METHOD_NOT_ALLOWED");
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(problem);
     }
 
     @ExceptionHandler(Exception.class)

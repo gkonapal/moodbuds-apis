@@ -1,0 +1,9 @@
+UPDATE moods SET color='#FFD93D' WHERE slug='happy' AND color IS NULL;
+UPDATE moods SET color='#F0D060' WHERE slug='confident' AND color IS NULL;
+UPDATE moods SET color='#7EB8F0' WHERE slug='cool' AND color IS NULL;
+UPDATE moods SET color='#CCCCCC' WHERE slug='professional' AND color IS NULL;
+UPDATE moods SET color='#D070F0' WHERE slug='party' AND color IS NULL;
+UPDATE moods SET color='#FF8040' WHERE slug='energetic' AND color IS NULL;
+UPDATE moods SET color='#F0A0B0' WHERE slug='romantic' AND color IS NULL;
+UPDATE moods SET color='#70C0D0' WHERE slug='calm' AND color IS NULL;
+UPDATE moods SET color='#AAAAAA' WHERE slug='minimal' AND color IS NULL;

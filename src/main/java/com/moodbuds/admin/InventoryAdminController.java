@@ -17,8 +17,11 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1/admin/inventory")
 public class InventoryAdminController {
-    private final JdbcClient jdbc; private final AuditService audit;
-    public InventoryAdminController(JdbcClient jdbc,AuditService audit){this.jdbc=jdbc;this.audit=audit;}
+    private final JdbcClient jdbc; private final AuditService audit; private final InventoryOverviewService overviewService;
+    public InventoryAdminController(JdbcClient jdbc,AuditService audit,InventoryOverviewService overviewService){this.jdbc=jdbc;this.audit=audit;this.overviewService=overviewService;}
+
+    @GetMapping("/overview") @PreAuthorize("hasAuthority('inventory.read') or hasRole('SUPER_ADMIN')")
+    Object overview(){return overviewService.overview();}
 
     @GetMapping("/logs") @PreAuthorize("hasAuthority('inventory.read') or hasRole('SUPER_ADMIN')")
     Object logs(@RequestParam(defaultValue="0") int page,@RequestParam(defaultValue="50") int size){

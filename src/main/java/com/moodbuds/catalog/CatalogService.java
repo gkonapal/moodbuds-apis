@@ -90,7 +90,11 @@ public class CatalogService {
 
     public List<MoodSummary> moods() {
         return jdbc.sql("""
-                SELECT m.id,m.name,m.slug,m.tagline,m.personality_tagline,m.banner_image_url,m.color,
+                SELECT m.id,m.name,m.slug,m.emoji,m.tagline,m.personality_tagline,
+                       CASE WHEN m.banner_image_path IS NOT NULL
+                            THEN CONCAT('/api/v1/moods/',m.slug,'/banner')
+                            ELSE m.banner_image_url END AS banner_image_url,
+                       m.color,m.display_order,
                        COUNT(DISTINCT CASE WHEN p.is_active=1 AND p.publication_status='PUBLISHED' AND c.is_active=1 AND sc.is_active=1 THEN p.id END) product_count
                 FROM moods m
                 LEFT JOIN product_mood_tags pmt ON pmt.mood_id=m.id
@@ -98,8 +102,9 @@ public class CatalogService {
                 LEFT JOIN categories c ON c.id=p.category_id
                 LEFT JOIN subcategories sc ON sc.id=p.subcategory_id
                 WHERE m.is_active=1
-                GROUP BY m.id,m.name,m.slug,m.tagline,m.personality_tagline,m.banner_image_url,m.color
-                ORDER BY m.name,m.id
+                GROUP BY m.id,m.name,m.slug,m.emoji,m.tagline,m.personality_tagline,m.banner_image_url,
+                         m.banner_image_path,m.color,m.display_order
+                ORDER BY m.display_order,m.id
                 """).query((rs, rowNum) -> mood(rs)).list();
     }
 
@@ -273,8 +278,9 @@ public class CatalogService {
 
     private static MoodSummary mood(ResultSet rs) throws SQLException {
         return new MoodSummary(rs.getLong("id"), rs.getString("name"), rs.getString("slug"),
-                rs.getString("tagline"), rs.getString("personality_tagline"),
-                rs.getString("banner_image_url"), rs.getString("color"), rs.getLong("product_count"));
+                rs.getString("emoji"), rs.getString("tagline"), rs.getString("personality_tagline"),
+                rs.getString("banner_image_url"), rs.getString("color"), rs.getInt("display_order"),
+                rs.getLong("product_count"));
     }
 
     private static ProductCard productCard(ResultSet rs) throws SQLException {
