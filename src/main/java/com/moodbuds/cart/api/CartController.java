@@ -42,7 +42,7 @@ public class CartController {
 
     @PostMapping("/items")
     @ResponseStatus(HttpStatus.CREATED)
-    @Operation(summary = "Idempotently add a product and size to the cart")
+    @Operation(summary = "Add or merge a product and size into the cart")
     CartResponse add(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody AddCartItemRequest request) {
         return cart.add(CurrentCustomer.id(jwt), request);
     }
@@ -58,12 +58,6 @@ public class CartController {
     @Operation(summary = "Remove a customer-owned cart item")
     CartResponse remove(@AuthenticationPrincipal Jwt jwt, @PathVariable long itemId) {
         return cart.remove(CurrentCustomer.id(jwt), itemId);
-    }
-
-    @PostMapping("/items/{itemId}/move-to-wishlist")
-    @Operation(summary = "Move a customer-owned cart item to the wishlist")
-    MoveToWishlistResponse moveToWishlist(@AuthenticationPrincipal Jwt jwt, @PathVariable long itemId) {
-        return cart.moveToWishlist(CurrentCustomer.id(jwt), itemId);
     }
 
     @DeleteMapping

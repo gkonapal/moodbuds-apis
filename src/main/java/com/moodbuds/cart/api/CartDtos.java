@@ -45,7 +45,4 @@ public final class CartDtos {
 
     public record CartValidationResponse(boolean valid, boolean pricesRefreshed,
                                          List<CartIssue> issues, CartResponse cart) {}
-
-    public record MoveToWishlistResponse(long wishlistId, long wishlistItemId, String productSlug,
-                                         String size, boolean removedFromCart, CartResponse cart) {}
 }

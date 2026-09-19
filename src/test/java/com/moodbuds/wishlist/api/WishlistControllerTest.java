@@ -29,7 +29,7 @@ class WishlistControllerTest {
 
     @Test
     void returnsCustomerWishlist() throws Exception {
-        var item = new WishlistItemResponse(11, 21, "MB-21", "blue-tee", "Blue Tee", "M", List.of("S", "M"),
+        var item = new WishlistItemResponse(11, 21, "MB-21", "blue-tee", "Blue Tee", "M",
                 1_000, 800L, 800, "/blue.jpg", true, true, Instant.parse("2026-08-29T10:00:00Z"));
         when(wishlist.get(7)).thenReturn(new WishlistResponse(3L, 1, List.of(item)));
         Jwt jwt = mock(Jwt.class);
@@ -38,7 +38,6 @@ class WishlistControllerTest {
         var response = new WishlistController(wishlist).get(jwt);
         assertThat(response.itemCount()).isEqualTo(1);
         assertThat(response.items().getFirst().productSlug()).isEqualTo("blue-tee");
-        assertThat(response.items().getFirst().availableSizes()).containsExactly("S", "M");
         assertThat(response.items().getFirst().effectivePrice()).isEqualTo(800);
     }
 

@@ -84,7 +84,7 @@ public class CartService {
                 WHERE cart_id=:cartId AND product_id=:productId AND size=:size FOR UPDATE
                 """).param("cartId", cartId).param("productId", product.id()).param("size", size)
                 .query((rs, rowNum) -> new ExistingItem(rs.getLong("id"), rs.getInt("quantity"))).optional().orElse(null);
-        int finalQuantity = existing == null ? request.quantity() : existing.quantity();
+        int finalQuantity = request.quantity() + (existing == null ? 0 : existing.quantity());
         requireQuantity(finalQuantity);
         requireStock(product, finalQuantity);
         Long discount = validDiscount(product.price(), product.discountPrice());
@@ -163,34 +163,6 @@ public class CartService {
     }
 
     @Transactional
-    public MoveToWishlistResponse moveToWishlist(long customerId, long itemId) {
-        customers.requireActive(customerId);
-        lockCustomer(customerId);
-        var item = ownedItem(customerId, itemId, true);
-        long wishlistId = ensureWishlist(customerId);
-        Long wishlistItemId = jdbc.sql("""
-                SELECT id FROM wishlist_items
-                WHERE wishlist_id=:wishlistId AND product_id=:productId AND size <=> :size FOR UPDATE
-                """).param("wishlistId", wishlistId).param("productId", item.productId())
-                .param("size", item.size(), Types.VARCHAR).query(Long.class).optional().orElse(null);
-        if (wishlistItemId == null) {
-            var keys = new GeneratedKeyHolder();
-            namedJdbc.update("""
-                    INSERT INTO wishlist_items(wishlist_id,product_id,size,added_at)
-                    VALUES(:wishlistId,:productId,:size,UTC_TIMESTAMP())
-                    """, new MapSqlParameterSource().addValue("wishlistId", wishlistId)
-                    .addValue("productId", item.productId()).addValue("size", item.size()),
-                    keys, new String[]{"id"});
-            wishlistItemId = keys.getKey().longValue();
-        }
-        jdbc.sql("DELETE FROM cart_items WHERE id=:id").param("id", item.id()).update();
-        touchAndInvalidateCoupon(item.cartId());
-        String slug = jdbc.sql("SELECT slug FROM products WHERE id=:id").param("id", item.productId())
-                .query(String.class).single();
-        return new MoveToWishlistResponse(wishlistId, wishlistItemId, slug, item.size(), true, get(customerId));
-    }
-
-    @Transactional
     public CartResponse clear(long customerId) {
         customers.requireActive(customerId);
         lockCustomer(customerId);
@@ -250,7 +222,7 @@ public class CartService {
         long selling = items.stream().mapToLong(CartItemResponse::lineSubtotal).sum();
         long gst = items.stream().mapToLong(CartItemResponse::gstAmount).sum();
         return new CartResponse(cartId, items.size(), quantity, items,
-                new CartTotals(mrp, mrp - selling, selling, gst, selling), updatedAt);
+                new CartTotals(mrp, mrp - selling, selling, gst, selling + gst), updatedAt);
     }
 
     private CartResponse emptyCart() {
@@ -271,7 +243,7 @@ public class CartService {
         boolean quantityAvailable = sizeConfigured && row.sizeActive() && row.stockQuantity() >= row.quantity();
         return new CartItemResponse(row.id(), row.productId(), row.sku(), row.slug(), row.name(), row.imageUrl(),
                 row.size(), row.quantity(), row.addedPrice(), addedDiscount, row.currentPrice(), currentDiscount,
-                effective, priceChanged, row.gstRate(), gst, subtotal, subtotal,
+                effective, priceChanged, row.gstRate(), gst, subtotal, subtotal + gst,
                 productAvailable, sizeConfigured, quantityAvailable);
     }
 
@@ -323,16 +295,6 @@ public class CartService {
                 INSERT INTO carts(user_id,coupon_id,coupon_discount,created_at,updated_at)
                 VALUES(:userId,NULL,0,UTC_TIMESTAMP(),UTC_TIMESTAMP())
                 """, new MapSqlParameterSource("userId", customerId), keys, new String[]{"id"});
-        return keys.getKey().longValue();
-    }
-
-    private long ensureWishlist(long customerId) {
-        var existing = jdbc.sql("SELECT id FROM wishlists WHERE user_id=:userId FOR UPDATE")
-                .param("userId", customerId).query(Long.class).optional();
-        if (existing.isPresent()) return existing.get();
-        var keys = new GeneratedKeyHolder();
-        namedJdbc.update("INSERT INTO wishlists(user_id,created_at) VALUES(:userId,UTC_TIMESTAMP())",
-                new MapSqlParameterSource("userId", customerId), keys, new String[]{"id"});
         return keys.getKey().longValue();
     }
 

@@ -39,9 +39,6 @@ public class WishlistService {
                 SELECT wi.id,wi.product_id,wi.size,wi.added_at,p.sku,p.slug,p.name,p.price,p.discount_price,
                        (SELECT pi.image_url FROM product_images pi WHERE pi.product_id=p.id
                         ORDER BY pi.is_primary DESC,pi.id LIMIT 1) primary_image_url,
-                       (SELECT GROUP_CONCAT(ps.size ORDER BY ps.id SEPARATOR ',')
-                        FROM product_sizes ps WHERE ps.product_id=p.id
-                          AND ps.is_available=1 AND ps.stock_quantity>0) available_sizes,
                        (p.is_active=1 AND p.publication_status='PUBLISHED' AND c.is_active=1 AND sc.is_active=1) product_available,
                        CASE WHEN wi.size IS NULL
                             THEN EXISTS(SELECT 1 FROM product_sizes ps WHERE ps.product_id=p.id
@@ -146,7 +143,7 @@ public class WishlistService {
                 SELECT id,quantity FROM cart_items WHERE cart_id=:cartId AND product_id=:productId AND size=:size FOR UPDATE
                 """).param("cartId", cartId).param("productId", item.productId()).param("size", size)
                 .query((rs, rowNum) -> new ExistingCartItem(rs.getLong("id"), rs.getInt("quantity"))).optional().orElse(null);
-        int finalQuantity = existing == null ? request.quantity() : existing.quantity();
+        int finalQuantity = request.quantity() + (existing == null ? 0 : existing.quantity());
         if (finalQuantity > 10) {
             throw ApiException.badRequest("CART_QUANTITY_LIMIT", "A cart item cannot exceed a quantity of 10");
         }
@@ -238,7 +235,7 @@ public class WishlistService {
         long price = rs.getLong("price");
         Long discount = nullableLong(rs, "discount_price");
         return new WishlistItemResponse(rs.getLong("id"), rs.getLong("product_id"), rs.getString("sku"),
-                rs.getString("slug"), rs.getString("name"), rs.getString("size"), splitSizes(rs.getString("available_sizes")), price, discount,
+                rs.getString("slug"), rs.getString("name"), rs.getString("size"), price, discount,
                 CatalogPricing.effectivePrice(price, discount), rs.getString("primary_image_url"),
                 rs.getBoolean("product_available"), rs.getBoolean("selected_size_available"),
                 rs.getTimestamp("added_at").toInstant());
@@ -247,10 +244,6 @@ public class WishlistService {
     private static Long nullableLong(ResultSet rs, String column) throws SQLException {
         long value = rs.getLong(column);
         return rs.wasNull() ? null : value;
-    }
-
-    private static List<String> splitSizes(String sizes) {
-        return sizes == null || sizes.isBlank() ? List.of() : List.of(sizes.split(","));
     }
 
     private static String clean(String value) { return value == null || value.isBlank() ? null : value.trim().toUpperCase(java.util.Locale.ROOT); }

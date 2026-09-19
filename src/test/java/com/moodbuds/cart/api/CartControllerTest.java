@@ -9,7 +9,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import java.time.Instant;
 import java.util.List;
 
 import com.moodbuds.cart.CartService;
@@ -37,22 +36,6 @@ class CartControllerTest {
         var response = new CartController(cart).count(jwt);
         assertThat(response.distinctItemCount()).isEqualTo(2);
         assertThat(response.totalQuantity()).isEqualTo(5);
-    }
-
-    @Test
-    void movesOwnedCartItemToWishlist() {
-        Jwt jwt = mock(Jwt.class);
-        when(jwt.getClaim("customerId")).thenReturn(7L);
-        var emptyCart = new CartResponse(9L, 0, 0, List.of(),
-                new CartTotals(0, 0, 0, 0, 0), Instant.parse("2026-09-19T07:00:00Z"));
-        when(cart.moveToWishlist(7, 11)).thenReturn(
-                new MoveToWishlistResponse(3, 21, "blue-tee", "M", true, emptyCart));
-
-        var response = new CartController(cart).moveToWishlist(jwt, 11);
-
-        assertThat(response.removedFromCart()).isTrue();
-        assertThat(response.productSlug()).isEqualTo("blue-tee");
-        assertThat(response.cart().items()).isEmpty();
     }
 
     @Test
