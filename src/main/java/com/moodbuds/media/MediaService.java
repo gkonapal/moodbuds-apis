@@ -78,8 +78,13 @@ public class MediaService {
     public MediaAsset get(long id) {
         return jdbc.sql("SELECT id,original_filename,content_type,size_bytes,width_px,height_px,created_at FROM media_assets WHERE id=:id")
                 .param("id",id).query((rs,n) -> new MediaAsset(rs.getLong("id"),url(rs.getLong("id")),rs.getString("original_filename"),
-                        rs.getString("content_type"),rs.getLong("size_bytes"),(Integer)rs.getObject("width_px"),(Integer)rs.getObject("height_px"),rs.getObject("created_at",LocalDateTime.class)))
+                        rs.getString("content_type"),rs.getLong("size_bytes"),nullableInt(rs,"width_px"),nullableInt(rs,"height_px"),rs.getObject("created_at",LocalDateTime.class)))
                 .optional().orElseThrow(() -> ApiException.notFound("Media asset"));
+    }
+
+    private Integer nullableInt(java.sql.ResultSet resultSet, String column) throws java.sql.SQLException {
+        Number value = (Number) resultSet.getObject(column);
+        return value == null ? null : value.intValue();
     }
 
     StoredMedia content(long id) {

@@ -72,12 +72,13 @@ public class CatalogController {
                                            @RequestParam(required = false) String color,
                                            @RequestParam(required = false) Long minPrice,
                                            @RequestParam(required = false) Long maxPrice,
+                                           @RequestParam(required = false) Boolean onSale,
                                            @RequestParam(defaultValue = "newest") String sort,
                                            @RequestParam(defaultValue = "0") int page,
                                            @RequestParam(defaultValue = "20") int size) {
         catalog.mood(slug);
         return catalog.products(new ProductSearchCriteria(query, category, subcategory, slug, productSize, color,
-                minPrice, maxPrice, true, null, null, null, sort, page, size));
+                minPrice, maxPrice, true, null, null, null, onSale, sort, page, size));
     }
 
     @GetMapping({"/products", "/products/search"})
@@ -94,11 +95,12 @@ public class CatalogController {
                                        @RequestParam(required = false) Boolean featured,
                                        @RequestParam(required = false) Boolean newArrival,
                                        @RequestParam(required = false) Boolean bestSeller,
+                                       @RequestParam(required = false) Boolean onSale,
                                        @RequestParam(defaultValue = "newest") String sort,
                                        @RequestParam(defaultValue = "0") int page,
                                        @RequestParam(defaultValue = "20") int size) {
         return catalog.products(new ProductSearchCriteria(query, category, subcategory, mood, productSize, color,
-                minPrice, maxPrice, inStock, featured, newArrival, bestSeller, sort, page, size));
+                minPrice, maxPrice, inStock, featured, newArrival, bestSeller, onSale, sort, page, size));
     }
 
     @GetMapping("/products/{slug}")

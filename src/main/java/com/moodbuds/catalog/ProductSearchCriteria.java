@@ -1,11 +1,14 @@
 package com.moodbuds.catalog;
 
+import java.util.Arrays;
+import java.util.List;
+
 import com.moodbuds.common.ApiException;
 
 public record ProductSearchCriteria(
         String query, String category, String subcategory, String mood, String productSize, String color,
         Long minPrice, Long maxPrice, Boolean inStock, Boolean featured, Boolean newArrival,
-        Boolean bestSeller, String sort, int page, int pageSize) {
+        Boolean bestSeller, Boolean onSale, String sort, int page, int pageSize) {
 
     public ProductSearchCriteria {
         query = clean(query);
@@ -31,5 +34,14 @@ public record ProductSearchCriteria(
 
     private static String clean(String value) {
         return value == null || value.isBlank() ? null : value.trim();
+    }
+
+    public List<String> productSizes() {
+        if (productSize == null) return List.of();
+        return Arrays.stream(productSize.split(","))
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .distinct()
+                .toList();
     }
 }

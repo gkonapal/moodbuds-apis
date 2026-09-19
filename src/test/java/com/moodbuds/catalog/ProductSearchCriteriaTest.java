@@ -10,10 +10,18 @@ class ProductSearchCriteriaTest {
     @Test
     void normalizesSearchValues() {
         var criteria = new ProductSearchCriteria("  tee ", " women ", null, null, null, null,
-                100L, 500L, true, null, null, null, " PRICE-ASC ", 0, 20);
+                100L, 500L, true, null, null, null, null, " PRICE-ASC ", 0, 20);
         assertThat(criteria.query()).isEqualTo("tee");
         assertThat(criteria.category()).isEqualTo("women");
         assertThat(criteria.sort()).isEqualTo("price-asc");
+    }
+
+    @Test
+    void acceptsMultipleDistinctSizes() {
+        var criteria = new ProductSearchCriteria(null, null, null, null, " M, L, M ", null,
+                null, null, true, null, null, null, null, "newest", 0, 20);
+
+        assertThat(criteria.productSizes()).containsExactly("M", "L");
     }
 
     @Test
@@ -26,6 +34,6 @@ class ProductSearchCriteriaTest {
 
     private ProductSearchCriteria criteria(Long min, Long max, String sort, int page, int size) {
         return new ProductSearchCriteria(null, null, null, null, null, null, min, max,
-                null, null, null, null, sort, page, size);
+                null, null, null, null, null, sort, page, size);
     }
 }

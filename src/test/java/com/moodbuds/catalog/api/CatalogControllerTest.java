@@ -1,7 +1,9 @@
 package com.moodbuds.catalog.api;
 
 import static com.moodbuds.catalog.api.CatalogDtos.*;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -10,7 +12,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.List;
 
 import com.moodbuds.catalog.CatalogService;
+import com.moodbuds.catalog.ProductSearchCriteria;
 import com.moodbuds.common.PageResponse;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -44,6 +48,29 @@ class CatalogControllerTest {
         mockMvc.perform(get("/api/v1/products").param("sort", "unsafe"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.title").value("INVALID_SORT"));
+    }
+
+    @Test
+    void bindsCatalogFiltersIncludingMultipleSizesAndSale() throws Exception {
+        when(catalog.products(any())).thenReturn(PageResponse.of(List.of(), 0, 20, 0));
+
+        mockMvc.perform(get("/api/v1/products")
+                        .param("category", "women")
+                        .param("subcategory", "dresses")
+                        .param("productSize", "M,L")
+                        .param("minPrice", "99900")
+                        .param("maxPrice", "199900")
+                        .param("onSale", "true"))
+                .andExpect(status().isOk());
+
+        var criteria = ArgumentCaptor.forClass(ProductSearchCriteria.class);
+        verify(catalog).products(criteria.capture());
+        assertThat(criteria.getValue().category()).isEqualTo("women");
+        assertThat(criteria.getValue().subcategory()).isEqualTo("dresses");
+        assertThat(criteria.getValue().productSizes()).containsExactly("M", "L");
+        assertThat(criteria.getValue().minPrice()).isEqualTo(99900L);
+        assertThat(criteria.getValue().maxPrice()).isEqualTo(199900L);
+        assertThat(criteria.getValue().onSale()).isTrue();
     }
 
     @Test

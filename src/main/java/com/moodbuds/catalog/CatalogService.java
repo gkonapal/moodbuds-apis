@@ -181,7 +181,7 @@ public class CatalogService {
         return products(new ProductSearchCriteria(null, null, null, null, null, null,
                 null, null, true, flag.equals("featured") ? true : null,
                 flag.equals("newArrival") ? true : null, flag.equals("bestSeller") ? true : null,
-                "featured", 0, size)).content();
+                null, "featured", 0, size)).content();
     }
 
     private List<SubcategorySummary> subcategories(long categoryId) {
@@ -208,9 +208,9 @@ public class CatalogService {
             sql.append(" AND EXISTS(SELECT 1 FROM product_mood_tags pmt JOIN moods m ON m.id=pmt.mood_id AND m.is_active=1 WHERE pmt.product_id=p.id AND m.slug=:mood)");
             params.addValue("mood", c.mood());
         }
-        if (c.productSize() != null) {
-            sql.append(" AND EXISTS(SELECT 1 FROM product_sizes ps WHERE ps.product_id=p.id AND ps.size=:productSize AND ps.is_available=1 AND ps.stock_quantity>0)");
-            params.addValue("productSize", c.productSize());
+        if (!c.productSizes().isEmpty()) {
+            sql.append(" AND EXISTS(SELECT 1 FROM product_sizes ps WHERE ps.product_id=p.id AND ps.size IN (:productSizes) AND ps.is_available=1 AND ps.stock_quantity>0)");
+            params.addValue("productSizes", c.productSizes());
         }
         if (c.color() != null) { sql.append(" AND LOWER(p.color_name)=LOWER(:color)"); params.addValue("color", c.color()); }
         if (c.minPrice() != null) { sql.append(" AND ").append(EFFECTIVE_PRICE).append(">=:minPrice"); params.addValue("minPrice", c.minPrice()); }
@@ -221,6 +221,11 @@ public class CatalogService {
         if (c.featured() != null) { sql.append(" AND p.is_featured=:featured"); params.addValue("featured", c.featured()); }
         if (c.newArrival() != null) { sql.append(" AND p.is_new_arrival=:newArrival"); params.addValue("newArrival", c.newArrival()); }
         if (c.bestSeller() != null) { sql.append(" AND p.is_best_seller=:bestSeller"); params.addValue("bestSeller", c.bestSeller()); }
+        if (c.onSale() != null) {
+            sql.append(c.onSale()
+                    ? " AND p.discount_price IS NOT NULL AND p.discount_price<p.price"
+                    : " AND (p.discount_price IS NULL OR p.discount_price>=p.price)");
+        }
     }
 
     private String productSelect() {

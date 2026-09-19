@@ -56,7 +56,11 @@ public final class ProductAdminDtos {
 
     public record SizeInput(@NotBlank String size,@PositiveOrZero int stockQuantity,
                             @PositiveOrZero int lowStockThreshold,boolean available) {}
-    public record ImageInput(@Positive long mediaId,boolean primary,@PositiveOrZero int sortOrder) {}
+    public record ImageInput(@Positive Long id,@Positive Long mediaId,boolean primary,@PositiveOrZero int sortOrder) {
+        public ImageInput(long mediaId, boolean primary, int sortOrder) {
+            this(null, mediaId, primary, sortOrder);
+        }
+    }
 
     public record CompleteProductResponse(ProductView product,List<SizeView> sizes,List<ImageView> images,
                                           List<Long> moodIds,SizeChartView sizeChart) {}
@@ -66,6 +70,6 @@ public final class ProductAdminDtos {
                               boolean featured,boolean newArrival,boolean bestSeller,int returnWindowDays,
                               PublicationStatus publicationStatus,LocalDateTime publishedAt,LocalDateTime createdAt,LocalDateTime updatedAt) {}
     public record SizeView(long id,String size,int stockQuantity,int lowStockThreshold,boolean available) {}
-    public record ImageView(long id,long mediaId,String imageUrl,boolean primary,int sortOrder) {}
+    public record ImageView(long id,Long mediaId,String imageUrl,boolean primary,int sortOrder) {}
     public record SizeChartView(long id,long mediaId,String imageUrl) {}
 }

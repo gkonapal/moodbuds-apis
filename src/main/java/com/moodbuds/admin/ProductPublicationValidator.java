@@ -15,7 +15,7 @@ final class ProductPublicationValidator {
     static void validateCollections(List<SizeInput> sizes,List<ImageInput> images,List<Long> moodIds) {
         if(!unique(sizes.stream().map(SizeInput::size).toList())) throw ApiException.badRequest("DUPLICATE_SIZE","Each size may appear only once");
         if(sizes.stream().anyMatch(size -> !ALLOWED_SIZES.contains(size.size()))) throw ApiException.badRequest("INVALID_SIZE","Size must be XS, S, M, L, XL, XXL, or 3XL");
-        if(!unique(images.stream().map(ImageInput::mediaId).toList())) throw ApiException.badRequest("DUPLICATE_IMAGE","Each media image may appear only once");
+        if(!unique(images.stream().map(image -> image.mediaId()!=null ? "media:"+image.mediaId() : "existing:"+image.id()).toList())) throw ApiException.badRequest("DUPLICATE_IMAGE","Each product image may appear only once");
         if(!unique(moodIds)) throw ApiException.badRequest("DUPLICATE_MOOD","Each mood may appear only once");
         if(images.stream().filter(ImageInput::primary).count()>1) throw ApiException.badRequest("MULTIPLE_PRIMARY_IMAGES","A product can have only one primary image");
     }

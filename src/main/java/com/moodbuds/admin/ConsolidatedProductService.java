@@ -79,7 +79,7 @@ public class ConsolidatedProductService {
         var sizes=jdbc.sql("SELECT id,size,stock_quantity,low_stock_threshold,is_available FROM product_sizes WHERE product_id=:id ORDER BY id").param("id",id)
                 .query((rs,n)->new SizeView(rs.getLong("id"),rs.getString("size"),rs.getInt("stock_quantity"),rs.getInt("low_stock_threshold"),rs.getBoolean("is_available"))).list();
         var images=jdbc.sql("SELECT id,media_asset_id,image_url,is_primary,sort_order FROM product_images WHERE product_id=:id ORDER BY is_primary DESC,sort_order,id").param("id",id)
-                .query((rs,n)->new ImageView(rs.getLong("id"),rs.getLong("media_asset_id"),rs.getString("image_url"),rs.getBoolean("is_primary"),rs.getInt("sort_order"))).list();
+                .query((rs,n)->new ImageView(rs.getLong("id"),nullableLong(rs,"media_asset_id"),rs.getString("image_url"),rs.getBoolean("is_primary"),rs.getInt("sort_order"))).list();
         var moods=jdbc.sql("SELECT mood_id FROM product_mood_tags WHERE product_id=:id ORDER BY mood_id").param("id",id).query(Long.class).list();
         var chart=jdbc.sql("SELECT id,media_asset_id,chart_image_url FROM size_charts WHERE product_id=:id").param("id",id)
                 .query((rs,n)->new SizeChartView(rs.getLong("id"),rs.getLong("media_asset_id"),rs.getString("chart_image_url"))).optional().orElse(null);
@@ -133,7 +133,10 @@ public class ConsolidatedProductService {
                 .param("gst",request.product().gstRateId()).param("subcategory",request.product().subcategoryId()).param("category",request.product().categoryId()).query(Integer.class).single();
         if(relationship==0) throw ApiException.badRequest("INVALID_PRODUCT_REFERENCES","Category, subcategory, or GST rate is invalid, or the subcategory does not belong to the category");
         for(long moodId:request.moodIds()) if(jdbc.sql("SELECT COUNT(*) FROM moods WHERE id=:id").param("id",moodId).query(Integer.class).single()==0) throw ApiException.badRequest("INVALID_MOOD","A selected mood does not exist");
-        for(var image:request.images()) media.get(image.mediaId());
+        for(var image:request.images()) {
+            if (image.mediaId()!=null) media.get(image.mediaId());
+            else if (image.id()==null) throw ApiException.badRequest("INVALID_PRODUCT_IMAGE","An image must reference uploaded media or an existing product image");
+        }
         if(request.sizeChartMediaId()!=null) media.get(request.sizeChartMediaId());
     }
 
@@ -152,9 +155,19 @@ public class ConsolidatedProductService {
             if(delta!=0) jdbc.sql("INSERT INTO inventory_logs(product_id,size,change_type,quantity_change,quantity_before,quantity_after,reference_type,created_by,created_at) VALUES(:product,:size,:type,:delta,:before,:after,'product_admin',:admin,UTC_TIMESTAMP())")
                     .param("product",id).param("size",size.size()).param("type",creating?"RESTOCK":"MANUAL_ADJUSTMENT").param("delta",delta).param("before",before).param("after",size.stockQuantity()).param("admin",adminId).update();
         }
+        Map<Long,ExistingImage> previousImages=new LinkedHashMap<>();
+        jdbc.sql("SELECT id,media_asset_id,image_url FROM product_images WHERE product_id=:id FOR UPDATE").param("id",id)
+                .query((rs,n)->new ExistingImage(rs.getLong("id"),nullableLong(rs,"media_asset_id"),rs.getString("image_url")))
+                .list().forEach(image->previousImages.put(image.id(),image));
         jdbc.sql("DELETE FROM product_images WHERE product_id=:id").param("id",id).update();
-        for(var image:request.images()) jdbc.sql("INSERT INTO product_images(product_id,media_asset_id,image_url,is_primary,sort_order,created_at) VALUES(:product,:media,:url,:primary,:sort,UTC_TIMESTAMP())")
-                .param("product",id).param("media",image.mediaId()).param("url",media.url(image.mediaId())).param("primary",image.primary()).param("sort",image.sortOrder()).update();
+        for(var image:request.images()) {
+            ExistingImage existing=image.id()==null?null:previousImages.get(image.id());
+            if(image.mediaId()==null&&existing==null) throw ApiException.badRequest("INVALID_PRODUCT_IMAGE","An existing image does not belong to this product");
+            Long mediaId=image.mediaId()!=null?image.mediaId():existing.mediaId();
+            String imageUrl=image.mediaId()!=null?media.url(image.mediaId()):existing.imageUrl();
+            jdbc.sql("INSERT INTO product_images(product_id,media_asset_id,image_url,is_primary,sort_order,created_at) VALUES(:product,:media,:url,:primary,:sort,UTC_TIMESTAMP())")
+                    .param("product",id).param("media",mediaId).param("url",imageUrl).param("primary",image.primary()).param("sort",image.sortOrder()).update();
+        }
         jdbc.sql("DELETE FROM product_mood_tags WHERE product_id=:id").param("id",id).update();
         for(long moodId:request.moodIds()) jdbc.sql("INSERT INTO product_mood_tags(product_id,mood_id) VALUES(:product,:mood)").param("product",id).param("mood",moodId).update();
         jdbc.sql("DELETE FROM size_charts WHERE product_id=:id").param("id",id).update();
@@ -165,7 +178,7 @@ public class ConsolidatedProductService {
     private void validateStoredForPublish(CompleteProductResponse p){
         ProductPublicationValidator.validatePublish(
                 p.sizes().stream().map(s->new SizeInput(s.size(),s.stockQuantity(),s.lowStockThreshold(),s.available())).toList(),
-                p.images().stream().map(i->new ImageInput(i.mediaId(),i.primary(),i.sortOrder())).toList(),p.moodIds());
+                p.images().stream().map(i->new ImageInput(i.id(),i.mediaId(),i.primary(),i.sortOrder())).toList(),p.moodIds());
         int activeRefs=jdbc.sql("SELECT COUNT(*) FROM products p JOIN categories c ON c.id=p.category_id AND c.is_active=1 JOIN subcategories sc ON sc.id=p.subcategory_id AND sc.category_id=c.id AND sc.is_active=1 JOIN gst_rates g ON g.id=p.gst_rate_id AND g.is_active=1 WHERE p.id=:id")
                 .param("id",p.product().id()).query(Integer.class).single();
         if(activeRefs==0) throw ApiException.badRequest("INACTIVE_PRODUCT_REFERENCES","Category, subcategory, and GST rate must be active before publishing");
@@ -189,4 +202,5 @@ public class ConsolidatedProductService {
                 PublicationStatus.valueOf(rs.getString("publication_status")),rs.getObject("published_at",LocalDateTime.class),rs.getObject("created_at",LocalDateTime.class),rs.getObject("updated_at",LocalDateTime.class));
     }
     private Long nullableLong(ResultSet rs,String column)throws SQLException{long value=rs.getLong(column);return rs.wasNull()?null:value;}
+    private record ExistingImage(long id,Long mediaId,String imageUrl) {}
 }
