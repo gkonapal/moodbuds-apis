@@ -184,7 +184,7 @@ public class CouponService {
                 .map(item -> new CouponCalculations.TaxLine(item.lineSubtotal(), item.gstRatePercentage())).toList(), discount);
         long taxable = cart.totals().sellingSubtotal() - discount;
         var totals = new CouponTotals(cart.totals().mrpSubtotal(), cart.totals().productDiscount(),
-                cart.totals().sellingSubtotal(), discount, taxable, gst, null, taxable + gst);
+                cart.totals().sellingSubtotal(), discount, taxable, gst, null, taxable);
         AppliedCouponResponse applied = coupon == null ? null : new AppliedCouponResponse(coupon.id(), coupon.code(),
                 coupon.description(), CouponType.valueOf(coupon.type()), coupon.value(), discount,
                 coupon.minimumOrder(), coupon.maximumDiscount(), coupon.validFrom(), coupon.validUntil());

@@ -28,7 +28,7 @@ class CouponCalculationsTest {
                 new CouponCalculations.TaxLine(10_000, new BigDecimal("5")),
                 new CouponCalculations.TaxLine(20_000, new BigDecimal("12")));
 
-        assertThat(CouponCalculations.gstAfterDiscount(lines, 3_000)).isEqualTo(2_610);
+        assertThat(CouponCalculations.gstAfterDiscount(lines, 3_000)).isEqualTo(2_358);
     }
 
     @Test

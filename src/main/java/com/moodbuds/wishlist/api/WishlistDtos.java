@@ -27,7 +27,8 @@ public final class WishlistDtos {
     public record WishlistResponse(Long wishlistId, int itemCount, List<WishlistItemResponse> items) {}
 
     public record WishlistItemResponse(long id, long productId, String sku, String productSlug,
-                                       String productName, String selectedSize, long price, Long discountPrice,
+                                       String productName, String selectedSize, List<String> availableSizes,
+                                       long price, Long discountPrice,
                                        long effectivePrice, String primaryImageUrl, boolean productAvailable,
                                        boolean selectedSizeAvailable, Instant addedAt) {}
 

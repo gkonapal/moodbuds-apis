@@ -73,7 +73,7 @@ public class RefundStore {
         Map<Long, Long> refundableLines = new HashMap<>();
         for (int index = 0; index < allLines.size(); index++) {
             OrderLine line = allLines.get(index);
-            refundableLines.put(line.id(), line.lineTotal() - couponAllocations.get(index) + line.gstAmount());
+            refundableLines.put(line.id(), line.lineTotal() - couponAllocations.get(index));
         }
 
         var items = jdbc.sql("""
