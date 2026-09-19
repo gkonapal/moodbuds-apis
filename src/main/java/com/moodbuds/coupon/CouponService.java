@@ -34,9 +34,9 @@ public class CouponService {
         return jdbc.sql("""
                 SELECT id,code,description,type,discount_value,min_order_value,max_discount_amount,
                        valid_from,valid_until,usage_limit_global,usage_limit_per_user,current_usage_count,
-                       is_active,is_public,audience_type,first_order_only,show_on_homepage
+                       is_active,is_public
                 FROM coupons
-                WHERE is_active=1 AND audience_type='PUBLIC' AND first_order_only=0 AND valid_from<=UTC_TIMESTAMP()
+                WHERE is_active=1 AND is_public=1 AND valid_from<=UTC_TIMESTAMP()
                   AND (valid_until IS NULL OR valid_until>=UTC_TIMESTAMP())
                   AND (usage_limit_global IS NULL OR current_usage_count<usage_limit_global)
                 ORDER BY valid_until IS NULL,valid_until,id
@@ -47,49 +47,13 @@ public class CouponService {
         CouponRow coupon = jdbc.sql("""
                 SELECT id,code,description,type,discount_value,min_order_value,max_discount_amount,
                        usage_limit_global,usage_limit_per_user,current_usage_count,is_active,is_public,
-                       audience_type,first_order_only,show_on_homepage,
                        valid_from,valid_until
-                FROM coupons WHERE UPPER(code)=:code AND is_active=1 AND audience_type='PUBLIC' AND first_order_only=0
+                FROM coupons WHERE UPPER(code)=:code AND is_active=1 AND is_public=1
                   AND valid_from<=UTC_TIMESTAMP() AND (valid_until IS NULL OR valid_until>=UTC_TIMESTAMP())
                   AND (usage_limit_global IS NULL OR current_usage_count<usage_limit_global)
                 """).param("code", normalize(code)).query((rs, rowNum) -> coupon(rs)).optional()
                 .orElseThrow(() -> ApiException.notFound("Coupon"));
         return publicResponse(coupon);
-    }
-
-    public CustomerCouponResponse publicHomepageCoupon() {
-        CouponRow coupon = jdbc.sql("""
-                SELECT id,code,description,type,discount_value,min_order_value,max_discount_amount,
-                       usage_limit_global,usage_limit_per_user,current_usage_count,is_active,is_public,
-                       audience_type,first_order_only,show_on_homepage,valid_from,valid_until
-                FROM coupons
-                WHERE is_active=1 AND audience_type='PUBLIC' AND first_order_only=1 AND show_on_homepage=1
-                  AND valid_from<=UTC_TIMESTAMP() AND (valid_until IS NULL OR valid_until>=UTC_TIMESTAMP())
-                  AND (usage_limit_global IS NULL OR current_usage_count<usage_limit_global)
-                ORDER BY id DESC LIMIT 1
-                """).query((rs,rowNum)->coupon(rs)).optional()
-                .orElseThrow(()->ApiException.notFound("Homepage coupon"));
-        return new CustomerCouponResponse(coupon.code(), coupon.description(), CouponType.valueOf(coupon.type()),
-                coupon.value(), coupon.minimumOrder(), coupon.maximumDiscount(), coupon.validFrom(), coupon.validUntil(),
-                coupon.audience(), true, true, coupon.perUserLimit());
-    }
-
-    public List<CustomerCouponResponse> customerCoupons(long customerId, boolean homepageOnly) {
-        customers.requireActive(customerId);
-        String homepage = homepageOnly ? " AND c.show_on_homepage=1" : "";
-        return jdbc.sql("""
-                SELECT c.id,c.code,c.description,c.type,c.discount_value,c.min_order_value,c.max_discount_amount,
-                       c.usage_limit_global,c.usage_limit_per_user,c.current_usage_count,c.is_active,c.is_public,
-                       c.audience_type,c.first_order_only,c.show_on_homepage,c.valid_from,c.valid_until
-                FROM coupons c
-                WHERE c.is_active=1 AND c.valid_from<=UTC_TIMESTAMP()
-                  AND (c.valid_until IS NULL OR c.valid_until>=UTC_TIMESTAMP())
-                  AND (c.usage_limit_global IS NULL OR c.current_usage_count<c.usage_limit_global)
-                  AND (c.audience_type='PUBLIC' OR (c.audience_type='ASSIGNED_USERS' AND EXISTS(
-                      SELECT 1 FROM coupon_user_assignments a WHERE a.coupon_id=c.id AND a.user_id=:userId AND a.is_active=1)))
-                """ + homepage + " ORDER BY c.show_on_homepage DESC,c.valid_until IS NULL,c.valid_until,c.id")
-                .param("userId", customerId).query((rs,rowNum)->coupon(rs)).list().stream()
-                .map(coupon -> customerResponseIfEligible(coupon, customerId)).filter(java.util.Objects::nonNull).toList();
     }
 
     @Transactional
@@ -162,12 +126,9 @@ public class CouponService {
         if (coupon.globalLimit() != null && coupon.currentUsage() >= coupon.globalLimit()) {
             throw unprocessable("COUPON_USAGE_LIMIT_REACHED", "This coupon has reached its usage limit");
         }
-        int customerUsage = usage(coupon.id(), customerId);
-        int customerLimit = customerLimit(coupon, customerId);
-        if (coupon.firstOrderOnly() && !firstOrderEligible(customerId)) {
-            throw unprocessable("COUPON_FIRST_ORDER_ONLY", "This offer is available only on your first order");
-        }
-        if (customerUsage >= customerLimit) {
+        int customerUsage = jdbc.sql("SELECT COUNT(*) FROM coupon_usage WHERE coupon_id=:couponId AND user_id=:userId")
+                .param("couponId", coupon.id()).param("userId", customerId).query(Integer.class).single();
+        if (customerUsage >= coupon.perUserLimit()) {
             throw unprocessable("COUPON_USER_LIMIT_REACHED", "You have already used this coupon the maximum number of times");
         }
         if (subtotal < coupon.minimumOrder()) {
@@ -228,7 +189,6 @@ public class CouponService {
         return """
                 SELECT id,code,description,type,discount_value,min_order_value,max_discount_amount,
                        usage_limit_global,usage_limit_per_user,current_usage_count,is_active,is_public,
-                       audience_type,first_order_only,show_on_homepage,
                        valid_from,valid_until FROM coupons
                 """;
     }
@@ -239,8 +199,6 @@ public class CouponService {
                 nullableLong(rs, "max_discount_amount"), nullableInteger(rs, "usage_limit_global"),
                 rs.getInt("usage_limit_per_user"), rs.getInt("current_usage_count"),
                 rs.getBoolean("is_active"), rs.getBoolean("is_public"),
-                CouponAudience.valueOf(rs.getString("audience_type")), rs.getBoolean("first_order_only"),
-                rs.getBoolean("show_on_homepage"),
                 rs.getTimestamp("valid_from").toInstant(),
                 rs.getTimestamp("valid_until") == null ? null : rs.getTimestamp("valid_until").toInstant());
     }
@@ -249,40 +207,6 @@ public class CouponService {
         return new PublicCouponResponse(coupon.code(), coupon.description(), CouponType.valueOf(coupon.type()),
                 coupon.value(), coupon.minimumOrder(), coupon.maximumDiscount(), coupon.validFrom(), coupon.validUntil());
     }
-
-    private CustomerCouponResponse customerResponseIfEligible(CouponRow coupon, long customerId) {
-        try {
-            int used = usage(coupon.id(), customerId);
-            int limit = customerLimit(coupon, customerId);
-            if (coupon.firstOrderOnly() && !firstOrderEligible(customerId) || used >= limit) return null;
-            return new CustomerCouponResponse(coupon.code(), coupon.description(), CouponType.valueOf(coupon.type()),
-                    coupon.value(), coupon.minimumOrder(), coupon.maximumDiscount(), coupon.validFrom(), coupon.validUntil(),
-                    coupon.audience(), coupon.firstOrderOnly(), coupon.showOnHomepage(), limit-used);
-        } catch (ApiException exception) {
-            return null;
-        }
-    }
-
-    private int customerLimit(CouponRow coupon, long customerId) {
-        if (coupon.audience() == CouponAudience.ASSIGNED_USERS) {
-            Assignment assignment = jdbc.sql("""
-                    SELECT usage_limit_override FROM coupon_user_assignments
-                    WHERE coupon_id=:couponId AND user_id=:userId AND is_active=1
-                    """).param("couponId",coupon.id()).param("userId",customerId)
-                    .query((rs,rowNum)->new Assignment(nullableInteger(rs,"usage_limit_override"))).optional()
-                    .orElseThrow(()->unprocessable("COUPON_NOT_ASSIGNED","This coupon is not assigned to your account"));
-            return assignment.usageLimit()==null?coupon.perUserLimit():assignment.usageLimit();
-        }
-        return coupon.perUserLimit();
-    }
-
-    private int usage(long couponId,long customerId){return jdbc.sql("SELECT COUNT(*) FROM coupon_usage WHERE coupon_id=:couponId AND user_id=:userId")
-            .param("couponId",couponId).param("userId",customerId).query(Integer.class).single();}
-
-    private boolean firstOrderEligible(long customerId){return !jdbc.sql("""
-            SELECT EXISTS(SELECT 1 FROM orders WHERE user_id=:userId
-              AND status<>'CANCELLED' AND reservation_released_at IS NULL)
-            """).param("userId",customerId).query(Boolean.class).single();}
 
     private void clear(long customerId) {
         jdbc.sql("UPDATE carts SET coupon_id=NULL,coupon_discount=0,updated_at=UTC_TIMESTAMP() WHERE user_id=:userId")
@@ -301,10 +225,8 @@ public class CouponService {
     }
 
     private record StoredCoupon(long couponId, long discount) {}
-    private record Assignment(Integer usageLimit) {}
     private record CouponRow(long id, String code, String description, String type, BigDecimal value,
                              long minimumOrder, Long maximumDiscount, Integer globalLimit, int perUserLimit,
                              int currentUsage, boolean active, boolean publicCoupon,
-                             CouponAudience audience, boolean firstOrderOnly, boolean showOnHomepage,
                              Instant validFrom, Instant validUntil) {}
 }

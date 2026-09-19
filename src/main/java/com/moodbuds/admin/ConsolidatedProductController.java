@@ -16,6 +16,21 @@ public class ConsolidatedProductController {
     private final ConsolidatedProductService service;
     public ConsolidatedProductController(ConsolidatedProductService service){this.service=service;}
 
+    @GetMapping("/summary")
+    @PreAuthorize("hasAuthority('catalog.manage') or hasRole('SUPER_ADMIN')")
+    com.moodbuds.common.PageResponse<ProductAdminDtos.ProductSummary> summary(
+            @RequestParam(defaultValue="0") int page,
+            @RequestParam(defaultValue="50") int size,
+            @RequestParam(required=false,name="q") String query){
+        return service.listSummaries(page,size,query);
+    }
+
+    @GetMapping("/{id}/full")
+    @PreAuthorize("hasAuthority('catalog.manage') or hasRole('SUPER_ADMIN')")
+    ProductAdminDtos.CompleteProductResponse getFull(@PathVariable long id){
+        return service.get(id);
+    }
+
     @PostMapping("/complete")
     @PreAuthorize("hasAuthority('catalog.manage') or hasRole('SUPER_ADMIN')")
     ResponseEntity<ProductAdminDtos.CompleteProductResponse> create(@Valid @RequestBody ProductAdminDtos.CompleteProductRequest request,@AuthenticationPrincipal Jwt jwt){

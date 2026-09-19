@@ -13,8 +13,8 @@ public final class CatalogDtos {
     public record CategoryDetail(long id, String name, String slug, long productCount,
                                  List<SubcategorySummary> subcategories) {}
 
-    public record MoodSummary(long id, String name, String slug, String emoji, String tagline, String personalityTagline,
-                              String bannerImageUrl, String color, int displayOrder, long productCount) {}
+    public record MoodSummary(long id, String name, String slug, String tagline, String personalityTagline,
+                              String bannerImageUrl, String color, long productCount) {}
 
     public record ProductCard(long id, String sku, String slug, String name,
                               long price, Long discountPrice, long effectivePrice, Integer discountPercent,

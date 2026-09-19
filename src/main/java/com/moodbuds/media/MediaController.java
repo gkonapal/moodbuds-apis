@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
@@ -28,8 +29,10 @@ public class MediaController {
 
     @PostMapping(value="/api/v1/admin/media/images",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasAuthority('catalog.manage') or hasRole('SUPER_ADMIN')")
-    ResponseEntity<List<MediaDtos.MediaAsset>> upload(@RequestPart("files") List<MultipartFile> files,@AuthenticationPrincipal Jwt jwt){
-        return ResponseEntity.status(201).body(service.upload(files,CurrentAdmin.id(jwt)));
+    ResponseEntity<List<MediaDtos.MediaAsset>> upload(@RequestPart("files") List<MultipartFile> files,
+                                                      @RequestParam(value="kind",defaultValue="products") String kind,
+                                                      @AuthenticationPrincipal Jwt jwt){
+        return ResponseEntity.status(201).body(service.upload(files,CurrentAdmin.id(jwt),kind));
     }
 
     @GetMapping("/api/v1/admin/media/{id}")
@@ -43,8 +46,9 @@ public class MediaController {
     @GetMapping("/api/v1/media/{id}/content")
     ResponseEntity<InputStreamResource> content(@PathVariable long id) throws IOException {
         var media=service.content(id);
+        // Use weak caching (1 hour) with validation - files can be deleted anytime
         return ResponseEntity.ok().contentType(MediaType.parseMediaType(media.contentType()))
-                .cacheControl(CacheControl.maxAge(java.time.Duration.ofDays(30)).cachePublic())
+                .cacheControl(CacheControl.maxAge(java.time.Duration.ofHours(1)).cachePublic().mustRevalidate())
                 .header(HttpHeaders.CONTENT_DISPOSITION,"inline; filename=\""+media.originalFilename().replace("\"","")+"\"")
                 .body(new InputStreamResource(media.inputStream()));
     }

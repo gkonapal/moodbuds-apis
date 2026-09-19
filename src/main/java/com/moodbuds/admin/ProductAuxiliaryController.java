@@ -57,5 +57,12 @@ public class ProductAuxiliaryController {
         audit.record(CurrentAdmin.id(jwt),"size_chart.deleted","size_chart",id,null,null);
     }
 
+    @GetMapping("/coupons/{couponId}/usage")
+    @PreAuthorize("hasAuthority('coupons.manage') or hasRole('SUPER_ADMIN')")
+    Object couponUsage(@PathVariable long couponId) {
+        return jdbc.sql("SELECT cu.*,o.order_number,u.email customer_email FROM coupon_usage cu LEFT JOIN orders o ON o.id=cu.order_id JOIN users u ON u.id=cu.user_id WHERE cu.coupon_id=:id ORDER BY cu.id DESC")
+                .param("id",couponId).query().listOfRows();
+    }
+
     public record ChartRequest(String chartImageUrl) {}
 }

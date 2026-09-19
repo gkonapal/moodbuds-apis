@@ -151,7 +151,7 @@ public class CustomerAuthService {
         int failures = user.failedAttempts() + 1;
         jdbc.sql("""
                 UPDATE users SET failed_login_attempts=:failures,
-                    locked_until=CASE WHEN :failures>=:max THEN DATE_ADD(UTC_TIMESTAMP(),INTERVAL 15 MINUTE) ELSE NULL END
+                    locked_until=CASE WHEN :failures>=:max THEN DATE_ADD(CURRENT_TIMESTAMP(, INTERVAL 15 MINUTE)) ELSE NULL END
                 WHERE id=:id
                 """).param("failures", failures).param("max", MAX_FAILED_ATTEMPTS)
                 .param("id", user.id()).update();

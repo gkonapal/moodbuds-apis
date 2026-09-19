@@ -48,6 +48,13 @@ public class ConsolidatedProductService {
             """,p,holder,new String[]{"id"});
         long id=holder.getKey().longValue();
         replaceChildren(id,request,adminId,true);
+        
+        // Finalize temporary image files (move from temp to permanent storage)
+        var mediaIds=new java.util.ArrayList<Long>();
+        for(var image:request.images()) mediaIds.add(image.mediaId());
+        if(request.sizeChartMediaId()!=null) mediaIds.add(request.sizeChartMediaId());
+        if(!mediaIds.isEmpty()) media.finalizeTempFiles(mediaIds);
+        
         var response=get(id);
         audit.record(adminId,"product.complete_created","product",id,null,response);
         return response;
@@ -69,6 +76,13 @@ public class ConsolidatedProductService {
             WHERE id=:id
             """,p);
         replaceChildren(id,request,adminId,false);
+        
+        // Finalize temporary image files (move from temp to permanent storage)
+        var mediaIds=new java.util.ArrayList<Long>();
+        for(var image:request.images()) mediaIds.add(image.mediaId());
+        if(request.sizeChartMediaId()!=null) mediaIds.add(request.sizeChartMediaId());
+        if(!mediaIds.isEmpty()) media.finalizeTempFiles(mediaIds);
+        
         var response=get(id);
         audit.record(adminId,"product.complete_updated","product",id,old,response);
         return response;
@@ -85,6 +99,34 @@ public class ConsolidatedProductService {
                 .query((rs,n)->new SizeChartView(rs.getLong("id"),rs.getLong("media_asset_id"),rs.getString("chart_image_url"))).optional().orElse(null);
         return new CompleteProductResponse(product,sizes,images,moods,chart);
     }
+
+    public com.moodbuds.common.PageResponse<ProductSummary> listSummaries(int page,int size,String query){
+        int safePage=Math.max(page,0), safeSize=Math.min(Math.max(size,1),100);
+        String like=(query==null||query.isBlank())?null:"%"+query.trim().toLowerCase()+"%";
+        var rows=jdbc.sql("""
+            SELECT p.id,p.sku,p.name,p.price,p.discount_price,p.publication_status,
+                   COALESCE(SUM(ps.stock_quantity),0) AS stock,
+                   COALESCE(MIN(ps.low_stock_threshold),0) AS threshold,
+                   (SELECT pi.media_asset_id FROM product_images pi WHERE pi.product_id=p.id ORDER BY pi.is_primary DESC,pi.sort_order,pi.id LIMIT 1) AS primary_media_id,
+                   (SELECT m.name FROM product_mood_tags pmt JOIN moods m ON m.id=pmt.mood_id WHERE pmt.product_id=p.id ORDER BY pmt.mood_id LIMIT 1) AS mood_name,
+                   (SELECT m.color FROM product_mood_tags pmt JOIN moods m ON m.id=pmt.mood_id WHERE pmt.product_id=p.id ORDER BY pmt.mood_id LIMIT 1) AS mood_color
+            FROM products p
+            LEFT JOIN product_sizes ps ON ps.product_id=p.id AND ps.is_available=1
+            WHERE p.publication_status<>'ARCHIVED' AND (:like IS NULL OR LOWER(p.name) LIKE :like OR LOWER(p.sku) LIKE :like)
+            GROUP BY p.id,p.sku,p.name,p.price,p.discount_price,p.publication_status
+            ORDER BY p.id DESC LIMIT :limit OFFSET :offset
+            """)
+            .param("like",like).param("limit",safeSize).param("offset",safePage*safeSize)
+            .query((rs,n)->new ProductSummary(rs.getLong("id"),rs.getString("sku"),rs.getString("name"),rs.getLong("price"),
+                    toLong(rs.getObject("discount_price")),rs.getLong("stock"),rs.getInt("threshold"),
+                    toLong(rs.getObject("primary_media_id")),rs.getString("mood_name"),rs.getString("mood_color"),
+                    rs.getString("publication_status"))).list();
+        long total=jdbc.sql("SELECT COUNT(*) FROM products p WHERE p.publication_status<>'ARCHIVED' AND (:like IS NULL OR LOWER(p.name) LIKE :like OR LOWER(p.sku) LIKE :like)")
+                .param("like",like).query(Long.class).single();
+        return com.moodbuds.common.PageResponse.of(rows,safePage,safeSize,total);
+    }
+
+    private static Long toLong(Object v){ return v==null?null:((Number)v).longValue(); }
 
     @Transactional
     public CompleteProductResponse publish(long id,long adminId){

@@ -66,32 +66,6 @@ public class AdminAuthService {
                 new LoginResponse.AdminSummary(row.id, row.username, row.fullName, row.roleName, permissions));
     }
 
-    public LoginResponse.AdminSummary current(long adminId) {
-        var row = jdbc.sql("""
-                SELECT au.id, au.username, au.full_name, au.is_active,
-                       ar.name AS role_name, ar.is_active AS role_active
-                FROM admin_users au
-                JOIN admin_roles ar ON ar.id = au.role_id
-                WHERE au.id = :id
-                """).param("id", adminId).query((rs, n) -> new CurrentRow(
-                        rs.getLong("id"), rs.getString("username"), rs.getString("full_name"),
-                        rs.getBoolean("is_active"), rs.getString("role_name"), rs.getBoolean("role_active")))
-                .optional().orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED,
-                        "INVALID_ADMIN_SESSION", "This administrator session is no longer valid"));
-        if (!row.active || !row.roleActive) {
-            throw new ApiException(HttpStatus.FORBIDDEN, "ADMIN_DISABLED", "This administrator account is disabled");
-        }
-        var permissions = new LinkedHashSet<>(jdbc.sql("""
-                SELECT ap.permission_key
-                FROM admin_role_permissions arp
-                JOIN admin_permissions ap ON ap.id = arp.permission_id
-                JOIN admin_users au ON au.role_id = arp.role_id
-                WHERE au.id = :id
-                ORDER BY ap.permission_key
-                """).param("id", row.id).query(String.class).list());
-        return new LoginResponse.AdminSummary(row.id, row.username, row.fullName, row.roleName, permissions);
-    }
-
     private ApiException invalidCredentials(String username) {
         return new ApiException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "Invalid username or password");
     }
@@ -101,13 +75,11 @@ public class AdminAuthService {
         jdbc.sql("""
                 UPDATE admin_users
                 SET failed_attempts=:attempts,
-                    locked_until=CASE WHEN :attempts >= :max THEN DATE_ADD(UTC_TIMESTAMP(), INTERVAL 15 MINUTE) ELSE NULL END
+                    locked_until=CASE WHEN :attempts >= :max THEN DATE_ADD(CURRENT_TIMESTAMP(, INTERVAL 15 MINUTE)) ELSE NULL END
                 WHERE id=:id
                 """).param("attempts", attempts).param("max", MAX_FAILED_ATTEMPTS).param("id", row.id).update();
     }
 
     private record LoginRow(long id, String username, String passwordHash, String fullName, boolean active,
                             int failedAttempts, Timestamp lockedUntil, String roleName, boolean roleActive) {}
-    private record CurrentRow(long id, String username, String fullName, boolean active,
-                              String roleName, boolean roleActive) {}
 }

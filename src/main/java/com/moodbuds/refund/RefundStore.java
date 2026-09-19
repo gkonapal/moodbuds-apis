@@ -141,7 +141,7 @@ public class RefundStore {
         if (List.of("PROCESSED", "FAILED").contains(operation.status())) return operation;
         jdbc.sql("""
                 UPDATE refunds SET provider_attempt_count=provider_attempt_count+1,
-                    next_retry_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 5 MINUTE),
+                    next_retry_at=DATE_ADD(CURRENT_TIMESTAMP(, INTERVAL 5 MINUTE)),
                     updated_at=UTC_TIMESTAMP() WHERE id=:id
                 """).param("id", refundId).update();
         return operation(refundId, false);
@@ -169,7 +169,7 @@ public class RefundStore {
                 UPDATE refunds SET gateway_refund_id=:gatewayId,status=:status,speed_processed=:speedProcessed,
                     provider_reference=:reference,gateway_response=:response,failure_code=NULL,
                     failure_description=NULL,next_retry_at=CASE WHEN :status='INITIATED'
-                        THEN DATE_ADD(UTC_TIMESTAMP(),INTERVAL 5 MINUTE) ELSE NULL END,
+                        THEN DATE_ADD(CURRENT_TIMESTAMP(, INTERVAL 5 MINUTE)) ELSE NULL END,
                     last_reconciled_at=UTC_TIMESTAMP(),completed_at=CASE WHEN :status IN ('PROCESSED','FAILED')
                         THEN UTC_TIMESTAMP() ELSE NULL END,updated_at=UTC_TIMESTAMP() WHERE id=:id
                 """).param("gatewayId", provider.id()).param("status", status)
@@ -183,7 +183,7 @@ public class RefundStore {
     public void recordProviderFailure(long refundId, ApiException exception) {
         jdbc.sql("""
                 UPDATE refunds SET failure_code=:code,failure_description=:description,
-                    next_retry_at=COALESCE(next_retry_at,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 5 MINUTE)),
+                    next_retry_at=COALESCE(next_retry_at,DATE_ADD(CURRENT_TIMESTAMP(, INTERVAL 5 MINUTE))),
                     updated_at=UTC_TIMESTAMP() WHERE id=:id AND status IN ('PENDING','INITIATED')
                 """).param("code", exception.code()).param("description", exception.getMessage())
                 .param("id", refundId).update();

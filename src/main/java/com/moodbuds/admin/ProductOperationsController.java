@@ -23,10 +23,6 @@ public class ProductOperationsController {
     private final ConsolidatedProductService consolidated;
     public ProductOperationsController(JdbcClient jdbc,AdminCrudService crud,AuditService audit,ConsolidatedProductService consolidated){this.jdbc=jdbc;this.crud=crud;this.audit=audit;this.consolidated=consolidated;}
 
-    @GetMapping("/{id}/full")
-    @PreAuthorize("hasAuthority('catalog.read') or hasRole('SUPER_ADMIN')")
-    ProductAdminDtos.CompleteProductResponse full(@PathVariable long id){return consolidated.get(id);}
-
     @PutMapping("/{id}/sizes")
     @PreAuthorize("hasAuthority('catalog.manage') or hasRole('SUPER_ADMIN')")
     @Transactional
