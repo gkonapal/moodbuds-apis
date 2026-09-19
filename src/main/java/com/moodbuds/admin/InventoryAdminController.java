@@ -17,11 +17,8 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/v1/admin/inventory")
 public class InventoryAdminController {
-    private final JdbcClient jdbc; private final AuditService audit; private final InventoryOverviewService overviewService;
-    public InventoryAdminController(JdbcClient jdbc,AuditService audit,InventoryOverviewService overviewService){this.jdbc=jdbc;this.audit=audit;this.overviewService=overviewService;}
-
-    @GetMapping("/overview") @PreAuthorize("hasAuthority('inventory.read') or hasRole('SUPER_ADMIN')")
-    Object overview(){return overviewService.overview();}
+    private final JdbcClient jdbc; private final AuditService audit;
+    public InventoryAdminController(JdbcClient jdbc,AuditService audit){this.jdbc=jdbc;this.audit=audit;}
 
     @GetMapping("/logs") @PreAuthorize("hasAuthority('inventory.read') or hasRole('SUPER_ADMIN')")
     Object logs(@RequestParam(defaultValue="0") int page,@RequestParam(defaultValue="50") int size){
@@ -38,8 +35,8 @@ public class InventoryAdminController {
     Object adjust(@RequestBody Adjustment request,@AuthenticationPrincipal Jwt jwt){
         var row=jdbc.sql("SELECT stock_quantity FROM product_sizes WHERE product_id=:product AND size=:size FOR UPDATE").param("product",request.productId()).param("size",request.size()).query(Integer.class).optional().orElseThrow(()->ApiException.notFound("Product size"));
         int after=row+request.quantityChange();if(after<0)throw ApiException.badRequest("INSUFFICIENT_STOCK","The adjustment would make stock negative");
-        jdbc.sql("UPDATE product_sizes SET stock_quantity=:after,is_available=:available,updated_at=UTC_TIMESTAMP() WHERE product_id=:product AND size=:size").param("after",after).param("available",after>0).param("product",request.productId()).param("size",request.size()).update();
-        jdbc.sql("INSERT INTO inventory_logs(product_id,size,change_type,quantity_change,quantity_before,quantity_after,reference_type,created_by,created_at) VALUES(:product,:size,'MANUAL_ADJUSTMENT',:change,:before,:after,:reference,:admin,UTC_TIMESTAMP())")
+        jdbc.sql("UPDATE product_sizes SET stock_quantity=:after,is_available=:available,updated_at=CURRENT_TIMESTAMP() WHERE product_id=:product AND size=:size").param("after",after).param("available",after>0).param("product",request.productId()).param("size",request.size()).update();
+        jdbc.sql("INSERT INTO inventory_logs(product_id,size,change_type,quantity_change,quantity_before,quantity_after,reference_type,created_by,created_at) VALUES(:product,:size,'MANUAL_ADJUSTMENT',:change,:before,:after,:reference,:admin,CURRENT_TIMESTAMP())")
                 .param("product",request.productId()).param("size",request.size()).param("change",request.quantityChange()).param("before",row).param("after",after).param("reference",request.reason()).param("admin",CurrentAdmin.id(jwt)).update();
         var result=Map.of("productId",request.productId(),"size",request.size(),"quantityBefore",row,"quantityAfter",after);
         audit.record(CurrentAdmin.id(jwt),"inventory.adjusted","product",request.productId(),Map.of("stock",row),result);return result;

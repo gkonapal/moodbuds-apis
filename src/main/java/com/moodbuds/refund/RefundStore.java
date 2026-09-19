@@ -114,7 +114,7 @@ public class RefundStore {
                 INSERT INTO refunds(order_id,payment_id,return_request_id,idempotency_key,amount,currency,
                     speed_requested,reason,status,initiated_at,updated_at)
                 VALUES(:orderId,:paymentId,:returnId,:key,:amount,:currency,:speed,:reason,'PENDING',
-                    UTC_TIMESTAMP(),UTC_TIMESTAMP())
+                    CURRENT_TIMESTAMP(),CURRENT_TIMESTAMP())
                 """, new MapSqlParameterSource().addValue("orderId", returned.orderId())
                 .addValue("paymentId", returned.paymentId()).addValue("returnId", returnId)
                 .addValue("key", idempotencyKey).addValue("amount", refundAmount)
@@ -128,7 +128,7 @@ public class RefundStore {
         restockGoodItems(returned, items);
         jdbc.sql("""
                 UPDATE return_requests SET status='REFUND_INITIATED',inventory_restocked_at=COALESCE(
-                    inventory_restocked_at,UTC_TIMESTAMP()),updated_at=UTC_TIMESTAMP() WHERE id=:id
+                    inventory_restocked_at,CURRENT_TIMESTAMP()),updated_at=CURRENT_TIMESTAMP() WHERE id=:id
                 """).param("id", returnId).update();
         transitionOrder(returned.orderId(), returned.orderStatus(), "REFUND_INITIATED",
                 "Return approved; refund initiated");
@@ -141,8 +141,8 @@ public class RefundStore {
         if (List.of("PROCESSED", "FAILED").contains(operation.status())) return operation;
         jdbc.sql("""
                 UPDATE refunds SET provider_attempt_count=provider_attempt_count+1,
-                    next_retry_at=DATE_ADD(UTC_TIMESTAMP(),INTERVAL 5 MINUTE),
-                    updated_at=UTC_TIMESTAMP() WHERE id=:id
+                    next_retry_at=DATEADD('MINUTE', 5, CURRENT_TIMESTAMP()),
+                    updated_at=CURRENT_TIMESTAMP() WHERE id=:id
                 """).param("id", refundId).update();
         return operation(refundId, false);
     }
@@ -169,9 +169,9 @@ public class RefundStore {
                 UPDATE refunds SET gateway_refund_id=:gatewayId,status=:status,speed_processed=:speedProcessed,
                     provider_reference=:reference,gateway_response=:response,failure_code=NULL,
                     failure_description=NULL,next_retry_at=CASE WHEN :status='INITIATED'
-                        THEN DATE_ADD(UTC_TIMESTAMP(),INTERVAL 5 MINUTE) ELSE NULL END,
-                    last_reconciled_at=UTC_TIMESTAMP(),completed_at=CASE WHEN :status IN ('PROCESSED','FAILED')
-                        THEN UTC_TIMESTAMP() ELSE NULL END,updated_at=UTC_TIMESTAMP() WHERE id=:id
+                        THEN DATEADD('MINUTE', 5, CURRENT_TIMESTAMP()) ELSE NULL END,
+                    last_reconciled_at=CURRENT_TIMESTAMP(),completed_at=CASE WHEN :status IN ('PROCESSED','FAILED')
+                        THEN CURRENT_TIMESTAMP() ELSE NULL END,updated_at=CURRENT_TIMESTAMP() WHERE id=:id
                 """).param("gatewayId", provider.id()).param("status", status)
                 .param("speedProcessed", provider.speedProcessed()).param("reference", provider.providerReference())
                 .param("response", json(provider.raw())).param("id", refundId).update();
@@ -183,8 +183,8 @@ public class RefundStore {
     public void recordProviderFailure(long refundId, ApiException exception) {
         jdbc.sql("""
                 UPDATE refunds SET failure_code=:code,failure_description=:description,
-                    next_retry_at=COALESCE(next_retry_at,DATE_ADD(UTC_TIMESTAMP(),INTERVAL 5 MINUTE)),
-                    updated_at=UTC_TIMESTAMP() WHERE id=:id AND status IN ('PENDING','INITIATED')
+                    next_retry_at=COALESCE(next_retry_at,DATEADD('MINUTE', 5, CURRENT_TIMESTAMP())),
+                    updated_at=CURRENT_TIMESTAMP() WHERE id=:id AND status IN ('PENDING','INITIATED')
                 """).param("code", exception.code()).param("description", exception.getMessage())
                 .param("id", refundId).update();
     }
@@ -212,7 +212,7 @@ public class RefundStore {
     public List<Long> dueRefundIds(int limit) {
         return jdbc.sql("""
                 SELECT id FROM refunds WHERE status IN ('PENDING','INITIATED')
-                  AND (next_retry_at IS NULL OR next_retry_at<=UTC_TIMESTAMP())
+                  AND (next_retry_at IS NULL OR next_retry_at<=CURRENT_TIMESTAMP())
                 ORDER BY initiated_at,id LIMIT :limit
                 """).param("limit", Math.min(Math.max(limit, 1), 500)).query(Long.class).list();
     }
@@ -316,13 +316,13 @@ public class RefundStore {
                     """).param("productId", item.productId()).param("size", item.size()).query(Integer.class).single();
             int after = Math.addExact(before, item.quantity());
             jdbc.sql("""
-                    UPDATE product_sizes SET stock_quantity=:after,is_available=1,updated_at=UTC_TIMESTAMP()
+                    UPDATE product_sizes SET stock_quantity=:after,is_available=1,updated_at=CURRENT_TIMESTAMP()
                     WHERE product_id=:productId AND size=:size
                     """).param("after", after).param("productId", item.productId()).param("size", item.size()).update();
             jdbc.sql("""
                     INSERT INTO inventory_logs(product_id,size,change_type,quantity_change,quantity_before,
                         quantity_after,reference_type,created_by,created_at)
-                    VALUES(:productId,:size,'RETURN',:quantity,:before,:after,:reference,NULL,UTC_TIMESTAMP())
+                    VALUES(:productId,:size,'RETURN',:quantity,:before,:after,:reference,NULL,CURRENT_TIMESTAMP())
                     """).param("productId", item.productId()).param("size", item.size())
                     .param("quantity", item.quantity()).param("before", before).param("after", after)
                     .param("reference", "return:" + returned.returnId()).update();
@@ -340,7 +340,7 @@ public class RefundStore {
         String paymentStatus = refunded >= paymentAmount ? "REFUNDED" : "PARTIALLY_REFUNDED";
         jdbc.sql("UPDATE payments SET status=:status WHERE gateway_payment_id=:paymentId")
                 .param("status", paymentStatus).param("paymentId", operation.gatewayPaymentId()).update();
-        jdbc.sql("UPDATE return_requests rr JOIN refunds r ON r.return_request_id=rr.id SET rr.status='COMPLETED',rr.updated_at=UTC_TIMESTAMP() WHERE r.id=:id")
+        jdbc.sql("UPDATE return_requests rr JOIN refunds r ON r.return_request_id=rr.id SET rr.status='COMPLETED',rr.updated_at=CURRENT_TIMESTAMP() WHERE r.id=:id")
                 .param("id", operation.id()).update();
         long orderId = ((Number) totals.get("order_id")).longValue();
         String orderStatus = refunded >= paymentAmount ? "REFUNDED" : "PARTIALLY_REFUNDED";
@@ -351,11 +351,11 @@ public class RefundStore {
 
     private void transitionOrder(long orderId, String from, String to, String note) {
         if (to.equals(from)) return;
-        jdbc.sql("UPDATE orders SET status=:status,updated_at=UTC_TIMESTAMP() WHERE id=:id")
+        jdbc.sql("UPDATE orders SET status=:status,updated_at=CURRENT_TIMESTAMP() WHERE id=:id")
                 .param("status", to).param("id", orderId).update();
         jdbc.sql("""
                 INSERT INTO order_status_history(order_id,from_status,to_status,notes,changed_by_id,created_at)
-                VALUES(:orderId,:fromStatus,:toStatus,:note,NULL,UTC_TIMESTAMP())
+                VALUES(:orderId,:fromStatus,:toStatus,:note,NULL,CURRENT_TIMESTAMP())
                 """).param("orderId", orderId).param("fromStatus", from).param("toStatus", to)
                 .param("note", note).update();
     }

@@ -14,7 +14,6 @@ public final class CouponDtos {
     private CouponDtos() {}
 
     public enum CouponType { FLAT, PERCENTAGE }
-    public enum CouponAudience { PUBLIC, PRIVATE_CODE, ASSIGNED_USERS }
 
     public record ApplyCouponRequest(
             @NotBlank @Size(max = 50) String code) {}
@@ -22,12 +21,6 @@ public final class CouponDtos {
     public record PublicCouponResponse(String code, String description, CouponType type,
                                        BigDecimal discountValue, long minOrderValue,
                                        Long maxDiscountAmount, Instant validFrom, Instant validUntil) {}
-
-    public record CustomerCouponResponse(String code, String description, CouponType type,
-                                         BigDecimal discountValue, long minOrderValue,
-                                         Long maxDiscountAmount, Instant validFrom, Instant validUntil,
-                                         CouponAudience audience, boolean firstOrderOnly,
-                                         boolean showOnHomepage, int remainingUses) {}
 
     public record AppliedCouponResponse(long id, String code, String description, CouponType type,
                                         BigDecimal discountValue, long discountAmount,

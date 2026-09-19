@@ -28,8 +28,8 @@ public class ProductAuxiliaryController {
         if("ARCHIVED".equals(status)) throw new ApiException(HttpStatus.CONFLICT,"PRODUCT_ARCHIVED","An archived product cannot be edited");
         jdbc.sql("""
           INSERT INTO size_charts(product_id,subcategory_id,chart_image_url,created_at,updated_at)
-          VALUES(:product,NULL,:url,UTC_TIMESTAMP(),UTC_TIMESTAMP())
-          ON DUPLICATE KEY UPDATE chart_image_url=:url,updated_at=UTC_TIMESTAMP()
+          VALUES(:product,NULL,:url,CURRENT_TIMESTAMP(),CURRENT_TIMESTAMP())
+          ON DUPLICATE KEY UPDATE chart_image_url=:url,updated_at=CURRENT_TIMESTAMP()
           """).param("product",productId).param("url",body.chartImageUrl()).update();
         audit.record(CurrentAdmin.id(jwt),"product.size_chart_updated","product",productId,null,body);
         return jdbc.sql("SELECT * FROM size_charts WHERE product_id=:id").param("id",productId).query().singleRow();
@@ -42,8 +42,8 @@ public class ProductAuxiliaryController {
         if (jdbc.sql("SELECT COUNT(*) FROM subcategories WHERE id=:id").param("id",subcategoryId).query(Integer.class).single()==0) throw ApiException.notFound("Subcategory");
         jdbc.sql("""
           INSERT INTO size_charts(product_id,subcategory_id,chart_image_url,created_at,updated_at)
-          VALUES(NULL,:subcategory,:url,UTC_TIMESTAMP(),UTC_TIMESTAMP())
-          ON DUPLICATE KEY UPDATE chart_image_url=:url,updated_at=UTC_TIMESTAMP()
+          VALUES(NULL,:subcategory,:url,CURRENT_TIMESTAMP(),CURRENT_TIMESTAMP())
+          ON DUPLICATE KEY UPDATE chart_image_url=:url,updated_at=CURRENT_TIMESTAMP()
           """).param("subcategory",subcategoryId).param("url",body.chartImageUrl()).update();
         audit.record(CurrentAdmin.id(jwt),"subcategory.size_chart_updated","subcategory",subcategoryId,null,body);
         return jdbc.sql("SELECT * FROM size_charts WHERE subcategory_id=:id AND product_id IS NULL").param("id",subcategoryId).query().singleRow();
@@ -55,6 +55,13 @@ public class ProductAuxiliaryController {
     void deleteChart(@PathVariable long id, @AuthenticationPrincipal Jwt jwt) {
         if (jdbc.sql("DELETE FROM size_charts WHERE id=:id").param("id",id).update()==0) throw ApiException.notFound("Size chart");
         audit.record(CurrentAdmin.id(jwt),"size_chart.deleted","size_chart",id,null,null);
+    }
+
+    @GetMapping("/coupons/{couponId}/usage")
+    @PreAuthorize("hasAuthority('coupons.manage') or hasRole('SUPER_ADMIN')")
+    Object couponUsage(@PathVariable long couponId) {
+        return jdbc.sql("SELECT cu.*,o.order_number,u.email customer_email FROM coupon_usage cu LEFT JOIN orders o ON o.id=cu.order_id JOIN users u ON u.id=cu.user_id WHERE cu.coupon_id=:id ORDER BY cu.id DESC")
+                .param("id",couponId).query().listOfRows();
     }
 
     public record ChartRequest(String chartImageUrl) {}

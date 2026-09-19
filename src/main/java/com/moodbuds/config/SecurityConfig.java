@@ -66,14 +66,16 @@ public class SecurityConfig {
         return http
                 .csrf(csrf -> csrf.disable())
                 .cors(Customizer.withDefaults())
+                .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin()))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/v1/admin/auth/login", "/api/v1/quiz/**",
                                 "/api/v1/customer/auth/register", "/api/v1/customer/auth/login",
                                 "/api/v1/customer/auth/refresh",
                                 "/api/v1/home", "/api/v1/categories/**", "/api/v1/subcategories/**",
-                                "/api/v1/moods/**", "/api/v1/products/**", "/api/v1/coupons/**", "/api/v1/content/**", "/api/v1/media/**",
-                                "/actuator/health", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                                "/api/v1/moods/**", "/api/v1/products/**", "/api/v1/coupons/**", "/api/v1/media/**",
+                                "/actuator/health", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html",
+                                "/h2-console/**").permitAll()
                         .requestMatchers("/api/v1/admin/**").hasAuthority("ADMIN_ACCESS")
                         .requestMatchers("/api/v1/customer/**").hasAuthority("CUSTOMER_ACCESS")
                         .anyRequest().denyAll())
@@ -86,8 +88,7 @@ public class SecurityConfig {
         var configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(properties.allowedOriginList());
         configuration.setAllowedMethods(java.util.List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(java.util.List.of("Authorization", "Content-Type", "Idempotency-Key",
-                "X-Request-Id", "X-Quiz-Session-Token"));
+        configuration.setAllowedHeaders(java.util.List.of("Authorization", "Content-Type", "Idempotency-Key", "X-Request-Id"));
         configuration.setExposedHeaders(java.util.List.of("X-Request-Id"));
         configuration.setAllowCredentials(true);
         var source = new UrlBasedCorsConfigurationSource();

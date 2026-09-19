@@ -5,7 +5,7 @@ import java.util.Map;
 import com.moodbuds.audit.AuditService;import com.moodbuds.auth.CurrentAdmin;
 import org.springframework.jdbc.core.simple.JdbcClient;import org.springframework.security.access.prepost.PreAuthorize;import org.springframework.security.core.annotation.AuthenticationPrincipal;import org.springframework.security.oauth2.jwt.Jwt;import org.springframework.transaction.annotation.Transactional;import org.springframework.web.bind.annotation.*;
 
-@RestController @RequestMapping("/api/v1/admin/quiz/options") @PreAuthorize("hasRole('SUPER_ADMIN')")
+@RestController @RequestMapping("/api/v1/admin/quiz/options") @PreAuthorize("hasAuthority('quiz.manage') or hasRole('SUPER_ADMIN')")
 public class QuizWeightController {
  private final JdbcClient jdbc;private final AuditService audit;public QuizWeightController(JdbcClient jdbc,AuditService audit){this.jdbc=jdbc;this.audit=audit;}
  @GetMapping("/{optionId}/weights") Object get(@PathVariable long optionId){return jdbc.sql("SELECT w.*,m.name AS mood_name FROM quiz_option_mood_weights w JOIN moods m ON m.id=w.mood_id WHERE option_id=:id ORDER BY score DESC").param("id",optionId).query().listOfRows();}

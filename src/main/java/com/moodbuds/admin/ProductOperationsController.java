@@ -23,10 +23,6 @@ public class ProductOperationsController {
     private final ConsolidatedProductService consolidated;
     public ProductOperationsController(JdbcClient jdbc,AdminCrudService crud,AuditService audit,ConsolidatedProductService consolidated){this.jdbc=jdbc;this.crud=crud;this.audit=audit;this.consolidated=consolidated;}
 
-    @GetMapping("/{id}/full")
-    @PreAuthorize("hasAuthority('catalog.read') or hasRole('SUPER_ADMIN')")
-    ProductAdminDtos.CompleteProductResponse full(@PathVariable long id){return consolidated.get(id);}
-
     @PutMapping("/{id}/sizes")
     @PreAuthorize("hasAuthority('catalog.manage') or hasRole('SUPER_ADMIN')")
     @Transactional
@@ -36,8 +32,8 @@ public class ProductOperationsController {
             if(size.stockQuantity()<0) throw ApiException.badRequest("INVALID_STOCK","Stock cannot be negative");
             jdbc.sql("""
               INSERT INTO product_sizes(product_id,size,stock_quantity,low_stock_threshold,is_available,created_at,updated_at)
-              VALUES(:product,:size,:stock,:threshold,:available,UTC_TIMESTAMP(),UTC_TIMESTAMP())
-              ON DUPLICATE KEY UPDATE stock_quantity=VALUES(stock_quantity),low_stock_threshold=VALUES(low_stock_threshold),is_available=VALUES(is_available),updated_at=UTC_TIMESTAMP()
+              VALUES(:product,:size,:stock,:threshold,:available,CURRENT_TIMESTAMP(),CURRENT_TIMESTAMP())
+              ON DUPLICATE KEY UPDATE stock_quantity=VALUES(stock_quantity),low_stock_threshold=VALUES(low_stock_threshold),is_available=VALUES(is_available),updated_at=CURRENT_TIMESTAMP()
               """).param("product",id).param("size",size.size()).param("stock",size.stockQuantity())
                     .param("threshold",size.lowStockThreshold()).param("available",size.available()).update();
         }
@@ -52,7 +48,7 @@ public class ProductOperationsController {
     List<Map<String,Object>> addImage(@PathVariable long id,@RequestBody ImageRequest image,@AuthenticationPrincipal Jwt jwt){
         requireMutable(id);
         if(image.primary()) jdbc.sql("UPDATE product_images SET is_primary=0 WHERE product_id=:id").param("id",id).update();
-        jdbc.sql("INSERT INTO product_images(product_id,image_url,is_primary,created_at) VALUES(:id,:url,:primary,UTC_TIMESTAMP())")
+        jdbc.sql("INSERT INTO product_images(product_id,image_url,is_primary,created_at) VALUES(:id,:url,:primary,CURRENT_TIMESTAMP())")
                 .param("id",id).param("url",image.imageUrl()).param("primary",image.primary()).update();
         audit.record(CurrentAdmin.id(jwt),"product.image_added","product",id,null,image);
         return jdbc.sql("SELECT * FROM product_images WHERE product_id=:id ORDER BY is_primary DESC,id").param("id",id).query().listOfRows();

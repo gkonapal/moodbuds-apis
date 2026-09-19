@@ -44,10 +44,17 @@ public class ConsolidatedProductService {
             INSERT INTO products(sku,name,slug,category_id,subcategory_id,gst_rate_id,description,fabric_details,color_name,price,discount_price,
               weight_grams,length_cm,width_cm,height_cm,is_featured,is_new_arrival,is_best_seller,return_window_days,is_active,publication_status,published_at,created_by,updated_by,created_at,updated_at)
             VALUES(:sku,:name,:slug,:category,:subcategory,:gst,:description,:fabric,:color,:price,:discount,:weight,:length,:width,:height,
-              :featured,:newArrival,:bestSeller,:returnDays,:active,:status,:publishedAt,:admin,:admin,UTC_TIMESTAMP(),UTC_TIMESTAMP())
+              :featured,:newArrival,:bestSeller,:returnDays,:active,:status,:publishedAt,:admin,:admin,CURRENT_TIMESTAMP(),CURRENT_TIMESTAMP())
             """,p,holder,new String[]{"id"});
         long id=holder.getKey().longValue();
         replaceChildren(id,request,adminId,true);
+        
+        // Finalize temporary image files (move from temp to permanent storage)
+        var mediaIds=new java.util.ArrayList<Long>();
+        for(var image:request.images()) mediaIds.add(image.mediaId());
+        if(request.sizeChartMediaId()!=null) mediaIds.add(request.sizeChartMediaId());
+        if(!mediaIds.isEmpty()) media.finalizeTempFiles(mediaIds);
+        
         var response=get(id);
         audit.record(adminId,"product.complete_created","product",id,null,response);
         return response;
@@ -65,10 +72,17 @@ public class ConsolidatedProductService {
             UPDATE products SET sku=:sku,name=:name,slug=:slug,category_id=:category,subcategory_id=:subcategory,gst_rate_id=:gst,
               description=:description,fabric_details=:fabric,color_name=:color,price=:price,discount_price=:discount,weight_grams=:weight,
               length_cm=:length,width_cm=:width,height_cm=:height,is_featured=:featured,is_new_arrival=:newArrival,is_best_seller=:bestSeller,
-              return_window_days=:returnDays,is_active=:active,publication_status=:status,published_at=:publishedAt,updated_by=:admin,updated_at=UTC_TIMESTAMP()
+              return_window_days=:returnDays,is_active=:active,publication_status=:status,published_at=:publishedAt,updated_by=:admin,updated_at=CURRENT_TIMESTAMP()
             WHERE id=:id
             """,p);
         replaceChildren(id,request,adminId,false);
+        
+        // Finalize temporary image files (move from temp to permanent storage)
+        var mediaIds=new java.util.ArrayList<Long>();
+        for(var image:request.images()) mediaIds.add(image.mediaId());
+        if(request.sizeChartMediaId()!=null) mediaIds.add(request.sizeChartMediaId());
+        if(!mediaIds.isEmpty()) media.finalizeTempFiles(mediaIds);
+        
         var response=get(id);
         audit.record(adminId,"product.complete_updated","product",id,old,response);
         return response;
@@ -86,12 +100,40 @@ public class ConsolidatedProductService {
         return new CompleteProductResponse(product,sizes,images,moods,chart);
     }
 
+    public com.moodbuds.common.PageResponse<ProductSummary> listSummaries(int page,int size,String query){
+        int safePage=Math.max(page,0), safeSize=Math.min(Math.max(size,1),100);
+        String like=(query==null||query.isBlank())?null:"%"+query.trim().toLowerCase()+"%";
+        var rows=jdbc.sql("""
+            SELECT p.id,p.sku,p.name,p.price,p.discount_price,p.publication_status,
+                   COALESCE(SUM(ps.stock_quantity),0) AS stock,
+                   COALESCE(MIN(ps.low_stock_threshold),0) AS threshold,
+                   (SELECT pi.media_asset_id FROM product_images pi WHERE pi.product_id=p.id ORDER BY pi.is_primary DESC,pi.sort_order,pi.id LIMIT 1) AS primary_media_id,
+                   (SELECT m.name FROM product_mood_tags pmt JOIN moods m ON m.id=pmt.mood_id WHERE pmt.product_id=p.id ORDER BY pmt.mood_id LIMIT 1) AS mood_name,
+                   (SELECT m.color FROM product_mood_tags pmt JOIN moods m ON m.id=pmt.mood_id WHERE pmt.product_id=p.id ORDER BY pmt.mood_id LIMIT 1) AS mood_color
+            FROM products p
+            LEFT JOIN product_sizes ps ON ps.product_id=p.id AND ps.is_available=1
+            WHERE p.publication_status<>'ARCHIVED' AND (:like IS NULL OR LOWER(p.name) LIKE :like OR LOWER(p.sku) LIKE :like)
+            GROUP BY p.id,p.sku,p.name,p.price,p.discount_price,p.publication_status
+            ORDER BY p.id DESC LIMIT :limit OFFSET :offset
+            """)
+            .param("like",like).param("limit",safeSize).param("offset",safePage*safeSize)
+            .query((rs,n)->new ProductSummary(rs.getLong("id"),rs.getString("sku"),rs.getString("name"),rs.getLong("price"),
+                    toLong(rs.getObject("discount_price")),rs.getLong("stock"),rs.getInt("threshold"),
+                    toLong(rs.getObject("primary_media_id")),rs.getString("mood_name"),rs.getString("mood_color"),
+                    rs.getString("publication_status"))).list();
+        long total=jdbc.sql("SELECT COUNT(*) FROM products p WHERE p.publication_status<>'ARCHIVED' AND (:like IS NULL OR LOWER(p.name) LIKE :like OR LOWER(p.sku) LIKE :like)")
+                .param("like",like).query(Long.class).single();
+        return com.moodbuds.common.PageResponse.of(rows,safePage,safeSize,total);
+    }
+
+    private static Long toLong(Object v){ return v==null?null:((Number)v).longValue(); }
+
     @Transactional
     public CompleteProductResponse publish(long id,long adminId){
         requireEditable(id);
         var current=get(id);
         validateStoredForPublish(current);
-        jdbc.sql("UPDATE products SET publication_status='PUBLISHED',is_active=1,published_at=COALESCE(published_at,UTC_TIMESTAMP()),updated_by=:admin,updated_at=UTC_TIMESTAMP() WHERE id=:id")
+        jdbc.sql("UPDATE products SET publication_status='PUBLISHED',is_active=1,published_at=COALESCE(published_at,CURRENT_TIMESTAMP()),updated_by=:admin,updated_at=CURRENT_TIMESTAMP() WHERE id=:id")
                 .param("admin",adminId).param("id",id).update();
         audit.record(adminId,"product.published","product",id,current.product().publicationStatus(),PublicationStatus.PUBLISHED);
         return get(id);
@@ -101,7 +143,7 @@ public class ConsolidatedProductService {
     public CompleteProductResponse unpublish(long id,long adminId){
         var current=get(id);
         if(current.product().publicationStatus()==PublicationStatus.ARCHIVED) throw new ApiException(HttpStatus.CONFLICT,"PRODUCT_ARCHIVED","An archived product cannot be unpublished");
-        jdbc.sql("UPDATE products SET publication_status='DRAFT',is_active=0,published_at=NULL,updated_by=:admin,updated_at=UTC_TIMESTAMP() WHERE id=:id")
+        jdbc.sql("UPDATE products SET publication_status='DRAFT',is_active=0,published_at=NULL,updated_by=:admin,updated_at=CURRENT_TIMESTAMP() WHERE id=:id")
                 .param("admin",adminId).param("id",id).update();
         audit.record(adminId,"product.unpublished","product",id,current.product().publicationStatus(),PublicationStatus.DRAFT);
         return get(id);
@@ -110,7 +152,7 @@ public class ConsolidatedProductService {
     @Transactional
     public CompleteProductResponse archive(long id,long adminId){
         var current=get(id);
-        jdbc.sql("UPDATE products SET publication_status='ARCHIVED',is_active=0,updated_by=:admin,updated_at=UTC_TIMESTAMP() WHERE id=:id")
+        jdbc.sql("UPDATE products SET publication_status='ARCHIVED',is_active=0,updated_by=:admin,updated_at=CURRENT_TIMESTAMP() WHERE id=:id")
                 .param("admin",adminId).param("id",id).update();
         audit.record(adminId,"product.archived","product",id,current.product().publicationStatus(),PublicationStatus.ARCHIVED);
         return get(id);
@@ -140,25 +182,25 @@ public class ConsolidatedProductService {
     private void replaceChildren(long id,CompleteProductRequest request,long adminId,boolean creating){
         Map<String,Integer> previous=new LinkedHashMap<>();
         jdbc.sql("SELECT size,stock_quantity FROM product_sizes WHERE product_id=:id FOR UPDATE").param("id",id).query((rs,n)->Map.entry(rs.getString(1),rs.getInt(2))).list().forEach(e->previous.put(e.getKey(),e.getValue()));
-        jdbc.sql("UPDATE product_sizes SET is_available=0,updated_at=UTC_TIMESTAMP() WHERE product_id=:id").param("id",id).update();
+        jdbc.sql("UPDATE product_sizes SET is_available=0,updated_at=CURRENT_TIMESTAMP() WHERE product_id=:id").param("id",id).update();
         for(var size:request.sizes()){
             int before=previous.getOrDefault(size.size(),0);
             jdbc.sql("""
                 INSERT INTO product_sizes(product_id,size,stock_quantity,low_stock_threshold,is_available,created_at,updated_at)
-                VALUES(:product,:size,:stock,:threshold,:available,UTC_TIMESTAMP(),UTC_TIMESTAMP())
-                ON DUPLICATE KEY UPDATE stock_quantity=VALUES(stock_quantity),low_stock_threshold=VALUES(low_stock_threshold),is_available=VALUES(is_available),updated_at=UTC_TIMESTAMP()
+                VALUES(:product,:size,:stock,:threshold,:available,CURRENT_TIMESTAMP(),CURRENT_TIMESTAMP())
+                ON DUPLICATE KEY UPDATE stock_quantity=VALUES(stock_quantity),low_stock_threshold=VALUES(low_stock_threshold),is_available=VALUES(is_available),updated_at=CURRENT_TIMESTAMP()
                 """).param("product",id).param("size",size.size()).param("stock",size.stockQuantity()).param("threshold",size.lowStockThreshold()).param("available",size.available()).update();
             int delta=size.stockQuantity()-before;
-            if(delta!=0) jdbc.sql("INSERT INTO inventory_logs(product_id,size,change_type,quantity_change,quantity_before,quantity_after,reference_type,created_by,created_at) VALUES(:product,:size,:type,:delta,:before,:after,'product_admin',:admin,UTC_TIMESTAMP())")
+            if(delta!=0) jdbc.sql("INSERT INTO inventory_logs(product_id,size,change_type,quantity_change,quantity_before,quantity_after,reference_type,created_by,created_at) VALUES(:product,:size,:type,:delta,:before,:after,'product_admin',:admin,CURRENT_TIMESTAMP())")
                     .param("product",id).param("size",size.size()).param("type",creating?"RESTOCK":"MANUAL_ADJUSTMENT").param("delta",delta).param("before",before).param("after",size.stockQuantity()).param("admin",adminId).update();
         }
         jdbc.sql("DELETE FROM product_images WHERE product_id=:id").param("id",id).update();
-        for(var image:request.images()) jdbc.sql("INSERT INTO product_images(product_id,media_asset_id,image_url,is_primary,sort_order,created_at) VALUES(:product,:media,:url,:primary,:sort,UTC_TIMESTAMP())")
+        for(var image:request.images()) jdbc.sql("INSERT INTO product_images(product_id,media_asset_id,image_url,is_primary,sort_order,created_at) VALUES(:product,:media,:url,:primary,:sort,CURRENT_TIMESTAMP())")
                 .param("product",id).param("media",image.mediaId()).param("url",media.url(image.mediaId())).param("primary",image.primary()).param("sort",image.sortOrder()).update();
         jdbc.sql("DELETE FROM product_mood_tags WHERE product_id=:id").param("id",id).update();
         for(long moodId:request.moodIds()) jdbc.sql("INSERT INTO product_mood_tags(product_id,mood_id) VALUES(:product,:mood)").param("product",id).param("mood",moodId).update();
         jdbc.sql("DELETE FROM size_charts WHERE product_id=:id").param("id",id).update();
-        if(request.sizeChartMediaId()!=null) jdbc.sql("INSERT INTO size_charts(product_id,subcategory_id,media_asset_id,chart_image_url,created_at,updated_at) VALUES(:product,NULL,:media,:url,UTC_TIMESTAMP(),UTC_TIMESTAMP())")
+        if(request.sizeChartMediaId()!=null) jdbc.sql("INSERT INTO size_charts(product_id,subcategory_id,media_asset_id,chart_image_url,created_at,updated_at) VALUES(:product,NULL,:media,:url,CURRENT_TIMESTAMP(),CURRENT_TIMESTAMP())")
                 .param("product",id).param("media",request.sizeChartMediaId()).param("url",media.url(request.sizeChartMediaId())).update();
     }
 

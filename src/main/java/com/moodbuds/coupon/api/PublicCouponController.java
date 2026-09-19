@@ -26,12 +26,6 @@ public class PublicCouponController {
         return coupons.publicCoupons();
     }
 
-    @GetMapping("/homepage")
-    @Operation(summary = "Get the public first-order homepage offer")
-    CouponDtos.CustomerCouponResponse homepage() {
-        return coupons.publicHomepageCoupon();
-    }
-
     @GetMapping("/{code}")
     @Operation(summary = "Get a currently usable public coupon by code")
     CouponDtos.PublicCouponResponse get(@PathVariable String code) {

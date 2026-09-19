@@ -68,7 +68,7 @@ public class WishlistService {
         var keys = new GeneratedKeyHolder();
         namedJdbc.update("""
                 INSERT INTO wishlist_items(wishlist_id,product_id,size,added_at)
-                VALUES(:wishlistId,:productId,:size,UTC_TIMESTAMP())
+                VALUES(:wishlistId,:productId,:size,CURRENT_TIMESTAMP())
                 """, new MapSqlParameterSource().addValue("wishlistId", wishlistId)
                 .addValue("productId", product.id()).addValue("size", size, Types.VARCHAR),
                 keys, new String[]{"id"});
@@ -83,7 +83,7 @@ public class WishlistService {
                 SELECT wi.id FROM wishlists w
                 JOIN wishlist_items wi ON wi.wishlist_id=w.id
                 JOIN products p ON p.id=wi.product_id
-                WHERE w.user_id=:userId AND p.slug=:slug AND wi.size <=> :size
+                WHERE w.user_id=:userId AND p.slug=:slug AND (wi.size IS NULL AND :size IS NULL OR wi.size = :size)
                 """).param("userId", customerId).param("slug", slug).param("size", size, Types.VARCHAR)
                 .query(Long.class).optional();
         return new WishlistStatusResponse(slug, size, row.isPresent(), row.orElse(null));
@@ -171,7 +171,7 @@ public class WishlistService {
         }
         jdbc.sql("DELETE FROM wishlist_items WHERE id=:id").param("id", item.id()).update();
         jdbc.sql("""
-                UPDATE carts SET coupon_id=NULL,coupon_discount=0,updated_at=UTC_TIMESTAMP() WHERE id=:id
+                UPDATE carts SET coupon_id=NULL,coupon_discount=0,updated_at=CURRENT_TIMESTAMP() WHERE id=:id
                 """).param("id", cartId).update();
         return new MoveToCartResponse(cartId, cartItemId, item.slug(), size, finalQuantity, true);
     }
@@ -182,7 +182,7 @@ public class WishlistService {
                 .param("userId", customerId).query(Long.class).optional();
         if (existing.isPresent()) return existing.get();
         var keys = new GeneratedKeyHolder();
-        namedJdbc.update("INSERT INTO wishlists(user_id,created_at) VALUES(:userId,UTC_TIMESTAMP())",
+        namedJdbc.update("INSERT INTO wishlists(user_id,created_at) VALUES(:userId,CURRENT_TIMESTAMP())",
                 new MapSqlParameterSource("userId", customerId), keys, new String[]{"id"});
         return keys.getKey().longValue();
     }
@@ -194,7 +194,7 @@ public class WishlistService {
         var keys = new GeneratedKeyHolder();
         namedJdbc.update("""
                 INSERT INTO carts(user_id,coupon_id,coupon_discount,created_at,updated_at)
-                VALUES(:userId,NULL,0,UTC_TIMESTAMP(),UTC_TIMESTAMP())
+                VALUES(:userId,NULL,0,CURRENT_TIMESTAMP(),CURRENT_TIMESTAMP())
                 """, new MapSqlParameterSource("userId", customerId), keys, new String[]{"id"});
         return keys.getKey().longValue();
     }
@@ -220,7 +220,7 @@ public class WishlistService {
     private Long findItem(long wishlistId, long productId, String size, boolean forUpdate) {
         return jdbc.sql("""
                 SELECT id FROM wishlist_items
-                WHERE wishlist_id=:wishlistId AND product_id=:productId AND size <=> :size
+                WHERE wishlist_id=:wishlistId AND product_id=:productId AND (size IS NULL AND :size IS NULL OR size = :size)
                 """ + (forUpdate ? " FOR UPDATE" : "")).param("wishlistId", wishlistId)
                 .param("productId", productId).param("size", size, Types.VARCHAR)
                 .query(Long.class).optional().orElse(null);

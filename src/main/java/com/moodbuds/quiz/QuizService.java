@@ -20,7 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class QuizService {
-    public static final int TOTAL_QUESTIONS = 5;
+    public static final int TOTAL_QUESTIONS = 10;
     public static final int SESSION_VALIDITY_HOURS = 24;
 
     private final JdbcClient jdbc;
@@ -42,7 +42,7 @@ public class QuizService {
                 """).query((rs, rowNum) -> new MoodSummary(
                         rs.getLong("id"), rs.getString("name"), rs.getString("slug"),
                         rs.getString("tagline"), rs.getString("color"))).list();
-        return new QuizConfigResponse(TOTAL_QUESTIONS, 4, 1, SESSION_VALIDITY_HOURS, moods);
+        return new QuizConfigResponse(TOTAL_QUESTIONS, 4, 6, SESSION_VALIDITY_HOURS, moods);
     }
 
     @Transactional
@@ -53,7 +53,7 @@ public class QuizService {
         jdbc.sql("""
                 INSERT INTO quiz_sessions(id, user_id, session_token, ip_address, result_mood_id,
                                           is_completed, started_at, completed_at)
-                VALUES (:id, NULL, :tokenHash, :ipAddress, NULL, 0, UTC_TIMESTAMP(), NULL)
+                VALUES (:id, NULL, :tokenHash, :ipAddress, NULL, 0, CURRENT_TIMESTAMP(), NULL)
                 """).param("id", id).param("tokenHash", token.hash()).param("ipAddress", ipAddress).update();
         var progress = progress(loadSession(id, token.raw(), false));
         return new CreateSessionResponse(id, token.raw(), progress.status(), progress.answeredQuestions(),
@@ -109,7 +109,7 @@ public class QuizService {
                 """).param("sessionId", session.id()).param("questionOrder", target.order()).update();
         jdbc.sql("""
                 INSERT INTO quiz_session_answers(quiz_session_id, question_id, option_id, answered_at)
-                VALUES (:sessionId, :questionId, :optionId, UTC_TIMESTAMP())
+                VALUES (:sessionId, :questionId, :optionId, CURRENT_TIMESTAMP())
                 """).param("sessionId", session.id()).param("questionId", target.id())
                 .param("optionId", option.id()).update();
         return progress(loadSession(sessionId, token, false));
@@ -134,7 +134,7 @@ public class QuizService {
         long winnerId = ranked.getFirst().moodId();
         jdbc.sql("""
                 UPDATE quiz_sessions
-                SET result_mood_id=:moodId, is_completed=1, completed_at=UTC_TIMESTAMP()
+                SET result_mood_id=:moodId, is_completed=1, completed_at=CURRENT_TIMESTAMP()
                 WHERE id=:sessionId
                 """).param("moodId", winnerId).param("sessionId", session.id()).update();
         return result(loadSession(sessionId, token, false));
@@ -174,6 +174,7 @@ public class QuizService {
                 WHERE is_active=1 AND (
                     (question_order=1 AND path_key IS NULL)
                     OR (:path IS NOT NULL AND question_order BETWEEN 2 AND 5 AND path_key=:path)
+                    OR (question_order BETWEEN 6 AND 10 AND path_key IS NULL)
                 )
                 ORDER BY question_order, id
                 """).param("path", path, Types.VARCHAR)
@@ -202,22 +203,18 @@ public class QuizService {
     private List<QuizScoringPolicy.ScoreCandidate> rankedScores(String sessionId) {
         var candidates = jdbc.sql("""
                 SELECT mood.id, mood.name, mood.slug, mood.tagline, mood.personality_tagline,
-                       CASE WHEN mood.banner_image_path IS NOT NULL
-                            THEN CONCAT('/api/v1/moods/',mood.slug,'/banner')
-                            ELSE mood.banner_image_url END AS banner_image_url,
-                       mood.color,
+                       mood.banner_image_url, mood.color,
                        COALESCE(SUM(CASE WHEN answer.id IS NOT NULL THEN weight.score ELSE 0 END),0) total_score,
-                       COALESCE(SUM(CASE WHEN answer.id IS NOT NULL AND question.question_order=:finalQuestionOrder THEN weight.score ELSE 0 END),0) final_score
+                       COALESCE(SUM(CASE WHEN answer.id IS NOT NULL AND question.question_order=10 THEN weight.score ELSE 0 END),0) final_score
                 FROM moods mood
                 LEFT JOIN quiz_option_mood_weights weight ON weight.mood_id=mood.id
                 LEFT JOIN quiz_session_answers answer
                   ON answer.option_id=weight.option_id AND answer.quiz_session_id=:sessionId
                 LEFT JOIN quiz_questions question ON question.id=answer.question_id
                 WHERE mood.is_active=1
-                   OR mood.id=(SELECT result_mood_id FROM quiz_sessions WHERE id=:sessionId AND is_completed=1)
                 GROUP BY mood.id, mood.name, mood.slug, mood.tagline, mood.personality_tagline,
-                         mood.banner_image_url, mood.banner_image_path, mood.color
-                """).param("sessionId", sessionId).param("finalQuestionOrder", TOTAL_QUESTIONS)
+                         mood.banner_image_url, mood.color
+                """).param("sessionId", sessionId)
                 .query((rs, rowNum) -> new QuizScoringPolicy.ScoreCandidate(
                         rs.getLong("id"), rs.getString("name"), rs.getString("slug"),
                         rs.getString("tagline"), rs.getString("personality_tagline"),

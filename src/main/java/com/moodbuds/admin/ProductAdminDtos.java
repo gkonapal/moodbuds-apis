@@ -68,4 +68,8 @@ public final class ProductAdminDtos {
     public record SizeView(long id,String size,int stockQuantity,int lowStockThreshold,boolean available) {}
     public record ImageView(long id,long mediaId,String imageUrl,boolean primary,int sortOrder) {}
     public record SizeChartView(long id,long mediaId,String imageUrl) {}
+
+    public record ProductSummary(long id,String sku,String name,long price,Long discountPrice,long stock,
+                                 int lowStockThreshold,Long primaryMediaId,String moodName,String moodColor,
+                                 String publicationStatus) {}
 }

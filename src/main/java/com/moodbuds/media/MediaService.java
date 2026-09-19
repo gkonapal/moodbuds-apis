@@ -8,7 +8,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.List;
@@ -39,20 +38,31 @@ public class MediaService {
         this.properties=properties; this.jdbc=jdbc; this.namedJdbc=namedJdbc; this.audit=audit;this.transactions=new TransactionTemplate(transactionManager);
     }
 
-    public List<MediaAsset> upload(List<MultipartFile> files, long adminId) {
+    private static final java.util.Set<String> ALLOWED_KINDS = java.util.Set.of("products", "banners");
+    private static final String TEMP_PREFIX = "temp/";
+
+    /**
+     * Upload files to temporary storage. Files must be finalized via finalizeTempFiles()
+     * before they can be used in products. This ensures orphaned files are prevented.
+     */
+    public List<MediaAsset> upload(List<MultipartFile> files, long adminId, String kind) {
         if (files == null || files.isEmpty()) throw ApiException.badRequest("IMAGE_REQUIRED", "Upload at least one image");
         if (files.size() > properties.maxImagesPerUpload()) throw ApiException.badRequest("TOO_MANY_IMAGES", "Too many images in one upload");
-        return files.stream().map(file -> transactions.execute(status -> uploadOne(file,adminId))).toList();
+        String folder = (kind == null || kind.isBlank()) ? "products" : kind.toLowerCase();
+        if (!ALLOWED_KINDS.contains(folder)) throw ApiException.badRequest("INVALID_MEDIA_KIND", "Media kind must be one of " + ALLOWED_KINDS);
+        // Save to temp folder
+        String tempFolder = TEMP_PREFIX + folder;
+        return files.stream().map(file -> transactions.execute(status -> uploadOne(file,adminId,tempFolder))).toList();
     }
 
-    private MediaAsset uploadOne(MultipartFile file, long adminId) {
+    private MediaAsset uploadOne(MultipartFile file, long adminId, String folder) {
         if (file == null || file.isEmpty()) throw ApiException.badRequest("EMPTY_IMAGE", "An uploaded image is empty");
         if (file.getSize() > properties.maxImageSizeBytes()) throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE,"IMAGE_TOO_LARGE","Image exceeds the configured size limit");
         byte[] bytes;
         try { bytes=file.getBytes(); } catch (IOException exception) { throw storageFailure(exception); }
         var detected=ImageMetadata.detect(bytes);
         String original=safeFilename(file.getOriginalFilename());
-        String key=LocalDate.now(java.time.ZoneOffset.UTC).toString().replace('-','/')+"/"+UUID.randomUUID()+"."+detected.extension();
+        String key=folder+"/"+UUID.randomUUID()+"."+detected.extension();
         Path target=resolve(key);
         writeAtomically(target,bytes);
         try {
@@ -63,7 +73,7 @@ public class MediaService {
             var holder=new GeneratedKeyHolder();
             namedJdbc.update("""
                     INSERT INTO media_assets(storage_key,original_filename,content_type,size_bytes,width_px,height_px,checksum_sha256,created_by,created_at)
-                    VALUES(:key,:name,:type,:size,:width,:height,:checksum,:admin,UTC_TIMESTAMP())
+                    VALUES(:key,:name,:type,:size,:width,:height,:checksum,:admin,CURRENT_TIMESTAMP())
                     """,params,holder,new String[]{"id"});
             long id=holder.getKey().longValue();
             var asset=get(id);
@@ -75,6 +85,137 @@ public class MediaService {
         }
     }
 
+    /**
+     * Finalize temporary files by moving them to permanent storage.
+     * Call this within the product creation or update transaction.
+     * Safe to call even if files are already finalized (idempotent).
+     */
+    @Transactional
+    public void finalizeTempFiles(List<Long> mediaIds) {
+        if (mediaIds == null || mediaIds.isEmpty()) return;
+        
+        for (Long id : mediaIds) {
+            try {
+                var row = jdbc.sql("SELECT storage_key FROM media_assets WHERE id=:id")
+                        .param("id", id)
+                        .query((rs, n) -> rs.getString("storage_key"))
+                        .optional();
+                
+                if (row.isEmpty()) {
+                    System.err.println("Media ID " + id + " not found in database");
+                    continue;
+                }
+                
+                String storageKey = row.get();
+                if (!storageKey.startsWith(TEMP_PREFIX)) {
+                    // Already finalized or not a temp file - skip safely
+                    System.out.println("Media ID " + id + " already finalized (key: " + storageKey + ")");
+                    continue;
+                }
+                
+                // Move from temp/category/uuid.ext → category/uuid.ext
+                String permanentKey = storageKey.substring(TEMP_PREFIX.length());
+                Path tempPath = resolve(storageKey);
+                Path permanentPath = resolve(permanentKey);
+                
+                System.out.println("Finalizing media " + id + ": moving from " + tempPath + " to " + permanentPath);
+                
+                try {
+                    if (!Files.exists(tempPath)) {
+                        System.err.println("ERROR: Temp file does not exist: " + tempPath);
+                        continue;
+                    }
+                    
+                    Files.createDirectories(permanentPath.getParent());
+                    Files.move(tempPath, permanentPath, StandardCopyOption.REPLACE_EXISTING);
+                    
+                    if (!Files.exists(permanentPath)) {
+                        System.err.println("ERROR: File move verification failed for " + permanentPath);
+                        continue;
+                    }
+                    
+                    // Update storage_key in database
+                    jdbc.sql("UPDATE media_assets SET storage_key=:key WHERE id=:id")
+                            .param("key", permanentKey)
+                            .param("id", id)
+                            .update();
+                    
+                    System.out.println("Successfully finalized media " + id + " at " + permanentPath);
+                } catch (IOException e) {
+                    System.err.println("IOException finalizing media " + id + ": " + e.getMessage());
+                    e.printStackTrace();
+                    throw storageFailure(e);
+                }
+            } catch (Exception e) {
+                System.err.println("Error: Failed to finalize temp file for media ID " + id + ": " + e.getMessage());
+                e.printStackTrace();
+                // Don't silently continue - fail the transaction so we know there's an issue
+                throw new RuntimeException("Failed to finalize media files. Images won't be accessible.", e);
+            }
+        }
+    }
+
+    /**
+     * Delete temporary files that were not finalized (orphaned uploads).
+     * Call this after transaction completes to clean up uploaded temp files.
+     */
+    public void cleanupTempFiles(List<Long> mediaIds) {
+        if (mediaIds == null || mediaIds.isEmpty()) return;
+        
+        for (Long id : mediaIds) {
+            var row = jdbc.sql("SELECT storage_key FROM media_assets WHERE id=:id")
+                    .param("id", id)
+                    .query((rs, n) -> rs.getString("storage_key"))
+                    .optional();
+            
+            if (row.isEmpty()) continue;
+            
+            String key = row.get();
+            if (!key.startsWith(TEMP_PREFIX)) continue; // Not a temp file
+            
+            Path tempPath = resolve(key);
+            try {
+                Files.deleteIfExists(tempPath);
+            } catch (IOException e) {
+                // Log but don't fail - this is cleanup
+                System.err.println("Failed to cleanup temp file " + tempPath + ": " + e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * Cleanup orphaned temporary files older than the specified age.
+     * This is a scheduled task for abandoned uploads that were never completed.
+     * Safe to call periodically (e.g., via @Scheduled).
+     */
+    public void cleanupOrphanedTempFiles(java.time.Duration maxAge) {
+        try {
+            Path tempDir = properties.root().resolve(TEMP_PREFIX);
+            if (!Files.exists(tempDir)) return;
+            
+            long cutoffTime = System.currentTimeMillis() - maxAge.toMillis();
+            java.nio.file.Files.walk(tempDir)
+                    .filter(Files::isRegularFile)
+                    .filter(p -> {
+                        try {
+                            return Files.getLastModifiedTime(p).toMillis() < cutoffTime;
+                        } catch (IOException e) {
+                            return false;
+                        }
+                    })
+                    .forEach(p -> {
+                        try {
+                            Files.delete(p);
+                            System.out.println("Cleaned up orphaned temp file: " + p);
+                        } catch (IOException e) {
+                            System.err.println("Failed to delete orphaned temp file " + p + ": " + e.getMessage());
+                        }
+                    });
+        } catch (IOException e) {
+            System.err.println("Error during orphaned temp file cleanup: " + e.getMessage());
+        }
+    }
+
     public MediaAsset get(long id) {
         return jdbc.sql("SELECT id,original_filename,content_type,size_bytes,width_px,height_px,created_at FROM media_assets WHERE id=:id")
                 .param("id",id).query((rs,n) -> new MediaAsset(rs.getLong("id"),url(rs.getLong("id")),rs.getString("original_filename"),
@@ -83,9 +224,16 @@ public class MediaService {
     }
 
     StoredMedia content(long id) {
-        return jdbc.sql("SELECT storage_key,content_type,original_filename FROM media_assets WHERE id=:id").param("id",id)
+        var media = jdbc.sql("SELECT storage_key,content_type,original_filename FROM media_assets WHERE id=:id").param("id",id)
                 .query((rs,n) -> new StoredMedia(resolve(rs.getString("storage_key")),rs.getString("content_type"),rs.getString("original_filename")))
                 .optional().orElseThrow(() -> ApiException.notFound("Media asset"));
+        
+        // Verify file actually exists on disk (it may have been deleted)
+        if (!Files.exists(media.path())) {
+            throw ApiException.notFound("Media file no longer exists on disk");
+        }
+        
+        return media;
     }
 
     @Transactional

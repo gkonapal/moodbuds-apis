@@ -52,7 +52,7 @@ public class CustomerAuthService {
         jdbc.sql("""
                 INSERT INTO users(email,password_hash,mobile,mobile_verified,email_verified,first_name,last_name,
                                   gender,is_active,failed_login_attempts,created_at,updated_at)
-                VALUES(:email,:password,:mobile,0,0,:firstName,:lastName,'UNSPECIFIED',1,0,UTC_TIMESTAMP(),UTC_TIMESTAMP())
+                VALUES(:email,:password,:mobile,0,0,:firstName,:lastName,'UNSPECIFIED',1,0,CURRENT_TIMESTAMP(),CURRENT_TIMESTAMP())
                 """).param("email", email).param("password", passwordEncoder.encode(request.password()))
                 .param("mobile", mobile, java.sql.Types.VARCHAR)
                 .param("firstName", request.firstName().trim()).param("lastName", request.lastName().trim()).update();
@@ -77,7 +77,7 @@ public class CustomerAuthService {
             throw invalidCredentials();
         }
         jdbc.sql("""
-                UPDATE users SET failed_login_attempts=0,locked_until=NULL,last_login_at=UTC_TIMESTAMP()
+                UPDATE users SET failed_login_attempts=0,locked_until=NULL,last_login_at=CURRENT_TIMESTAMP()
                 WHERE id=:id
                 """).param("id", user.id()).update();
         return createSession(user);
@@ -105,7 +105,7 @@ public class CustomerAuthService {
         var replacement = tokenService.create();
         jdbc.sql("""
                 UPDATE customer_auth_sessions
-                SET refresh_token_hash=:hash,last_used_at=UTC_TIMESTAMP()
+                SET refresh_token_hash=:hash,last_used_at=CURRENT_TIMESTAMP()
                 WHERE id=:id
                 """).param("hash", replacement.hash()).param("id", session.id()).update();
         return response(session.user(), session.id(), replacement.raw(), session.expiresAt());
@@ -119,13 +119,13 @@ public class CustomerAuthService {
                 """).param("sessionId", sessionId).param("customerId", customerId).query(String.class).optional()
                 .orElseThrow(CustomerAuthService::invalidRefreshToken);
         if (!tokenService.matches(request.refreshToken(), stored)) throw invalidRefreshToken();
-        jdbc.sql("UPDATE customer_auth_sessions SET revoked_at=UTC_TIMESTAMP() WHERE id=:id")
+        jdbc.sql("UPDATE customer_auth_sessions SET revoked_at=CURRENT_TIMESTAMP() WHERE id=:id")
                 .param("id", sessionId).update();
     }
 
     public void logoutAll(long customerId) {
         jdbc.sql("""
-                UPDATE customer_auth_sessions SET revoked_at=UTC_TIMESTAMP()
+                UPDATE customer_auth_sessions SET revoked_at=CURRENT_TIMESTAMP()
                 WHERE user_id=:userId AND revoked_at IS NULL
                 """).param("userId", customerId).update();
     }
@@ -136,7 +136,7 @@ public class CustomerAuthService {
         Instant refreshExpiresAt = Instant.now().plus(properties.customerRefreshTokenValidity());
         jdbc.sql("""
                 INSERT INTO customer_auth_sessions(id,user_id,refresh_token_hash,expires_at,created_at)
-                VALUES(:id,:userId,:hash,:expiresAt,UTC_TIMESTAMP())
+                VALUES(:id,:userId,:hash,:expiresAt,CURRENT_TIMESTAMP())
                 """).param("id", sessionId).param("userId", user.id()).param("hash", refresh.hash())
                 .param("expiresAt", LocalDateTime.ofInstant(refreshExpiresAt, ZoneOffset.UTC)).update();
         return response(user, sessionId, refresh.raw(), refreshExpiresAt);
@@ -151,7 +151,7 @@ public class CustomerAuthService {
         int failures = user.failedAttempts() + 1;
         jdbc.sql("""
                 UPDATE users SET failed_login_attempts=:failures,
-                    locked_until=CASE WHEN :failures>=:max THEN DATE_ADD(UTC_TIMESTAMP(),INTERVAL 15 MINUTE) ELSE NULL END
+                    locked_until=CASE WHEN :failures>=:max THEN DATEADD('MINUTE', 15, CURRENT_TIMESTAMP()) ELSE NULL END
                 WHERE id=:id
                 """).param("failures", failures).param("max", MAX_FAILED_ATTEMPTS)
                 .param("id", user.id()).update();
