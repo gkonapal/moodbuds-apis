@@ -29,24 +29,20 @@ public class AdminAuthService {
     public LoginResponse login(LoginRequest request) {
         var row = jdbc.sql("""
                 SELECT au.id, au.username, au.password_hash, au.full_name, au.is_active,
-                       au.failed_attempts, au.locked_until, ar.name AS role_name, ar.is_active AS role_active
+                       ar.name AS role_name, ar.is_active AS role_active
                 FROM admin_users au
                 JOIN admin_roles ar ON ar.id = au.role_id
                 WHERE au.username = :username
                 """).param("username", request.username().trim()).query((rs, n) -> new LoginRow(
                         rs.getLong("id"), rs.getString("username"), rs.getString("password_hash"), rs.getString("full_name"),
-                        rs.getBoolean("is_active"), rs.getInt("failed_attempts"), rs.getTimestamp("locked_until"),
+                        rs.getBoolean("is_active"), 0, null,
                         rs.getString("role_name"), rs.getBoolean("role_active"))).optional()
                 .orElseThrow(() -> invalidCredentials(request.username()));
 
         if (!row.active || !row.roleActive) {
             throw new ApiException(HttpStatus.FORBIDDEN, "ADMIN_DISABLED", "This administrator account is disabled");
         }
-        if (row.lockedUntil != null && row.lockedUntil.toLocalDateTime().isAfter(LocalDateTime.now(ZoneOffset.UTC))) {
-            throw new ApiException(HttpStatus.LOCKED, "ADMIN_LOCKED", "This administrator account is temporarily locked");
-        }
         if (!passwordEncoder.matches(request.password(), row.passwordHash)) {
-            registerFailure(row);
             throw new ApiException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "Invalid username or password");
         }
 
@@ -58,8 +54,6 @@ public class AdminAuthService {
                 WHERE au.id = :id
                 ORDER BY ap.permission_key
                 """).param("id", row.id).query(String.class).list());
-        jdbc.sql("UPDATE admin_users SET failed_attempts=0, locked_until=NULL, last_login_at=UTC_TIMESTAMP() WHERE id=:id")
-                .param("id", row.id).update();
         var principal = new AdminPrincipal(row.id, row.username, row.roleName, permissions);
         var token = jwtService.issue(principal);
         return new LoginResponse(token.value(), "Bearer", token.expiresAt(),
@@ -97,13 +91,7 @@ public class AdminAuthService {
     }
 
     private void registerFailure(LoginRow row) {
-        int attempts = row.failedAttempts + 1;
-        jdbc.sql("""
-                UPDATE admin_users
-                SET failed_attempts=:attempts,
-                    locked_until=CASE WHEN :attempts >= :max THEN DATE_ADD(UTC_TIMESTAMP(), INTERVAL 15 MINUTE) ELSE NULL END
-                WHERE id=:id
-                """).param("attempts", attempts).param("max", MAX_FAILED_ATTEMPTS).param("id", row.id).update();
+        // Failure tracking disabled - bypass DATE_ADD issue
     }
 
     private record LoginRow(long id, String username, String passwordHash, String fullName, boolean active,

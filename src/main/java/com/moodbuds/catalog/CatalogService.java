@@ -130,7 +130,7 @@ public class CatalogService {
                        p.price,p.discount_price,p.is_featured,p.is_new_arrival,p.is_best_seller,
                        p.return_window_days,c.id category_id,c.name category_name,c.slug category_slug,
                        sc.id subcategory_id,sc.name subcategory_name,sc.slug subcategory_slug,
-                       g.name gst_name,g.hsn_code,g.rate_percentage,
+                       g.rate_name gst_name,g.gst_percentage rate_percentage,
                        EXISTS(SELECT 1 FROM product_sizes ps WHERE ps.product_id=p.id
                               AND ps.is_available=1 AND ps.stock_quantity>0) in_stock
                 FROM products p
@@ -202,8 +202,8 @@ public class CatalogService {
             sql.append(" AND (p.name LIKE :query OR p.sku LIKE :query OR p.description LIKE :query)");
             params.addValue("query", "%" + c.query() + "%");
         }
-        if (c.category() != null) { sql.append(" AND c.slug=:category"); params.addValue("category", c.category()); }
-        if (c.subcategory() != null) { sql.append(" AND sc.slug=:subcategory"); params.addValue("subcategory", c.subcategory()); }
+        if (!c.categories().isEmpty()) { sql.append(" AND c.slug IN (:categories)"); params.addValue("categories", c.categories()); }
+        if (!c.subcategories().isEmpty()) { sql.append(" AND sc.slug IN (:subcategories)"); params.addValue("subcategories", c.subcategories()); }
         if (c.mood() != null) {
             sql.append(" AND EXISTS(SELECT 1 FROM product_mood_tags pmt JOIN moods m ON m.id=pmt.mood_id AND m.is_active=1 WHERE pmt.product_id=p.id AND m.slug=:mood)");
             params.addValue("mood", c.mood());
@@ -303,7 +303,7 @@ public class CatalogService {
         long price = rs.getLong("price");
         Long discount = nullableLong(rs, "discount_price");
         GstRate gst = rs.getString("gst_name") == null ? null
-                : new GstRate(rs.getString("gst_name"), rs.getString("hsn_code"), rs.getString("rate_percentage"));
+                : new GstRate(rs.getString("gst_name"), null, rs.getString("rate_percentage"));
         return new ProductBase(rs.getLong("id"), rs.getString("sku"), rs.getString("slug"), rs.getString("name"),
                 rs.getString("description"), rs.getString("fabric_details"), rs.getString("color_name"),
                 price, discount, rs.getBoolean("in_stock"), rs.getBoolean("is_featured"),
