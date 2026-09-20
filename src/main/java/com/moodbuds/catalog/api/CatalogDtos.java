@@ -18,7 +18,7 @@ public final class CatalogDtos {
 
     public record ProductCard(long id, String sku, String slug, String name,
                               long price, Long discountPrice, long effectivePrice, Integer discountPercent,
-                              String primaryImageUrl, boolean inStock,
+                              String primaryImageUrl, double averageRating, long reviewCount, boolean inStock,
                               boolean featured, boolean newArrival, boolean bestSeller,
                               CategoryRef category, SubcategoryRef subcategory) {}
 
@@ -33,6 +33,7 @@ public final class CatalogDtos {
     public record ProductDetail(long id, String sku, String slug, String name, String description,
                                 String fabricDetails, String colorName,
                                 long price, Long discountPrice, long effectivePrice, Integer discountPercent,
+                                double averageRating, long reviewCount,
                                 boolean inStock, boolean featured, boolean newArrival, boolean bestSeller,
                                 int returnWindowDays, CategoryRef category, SubcategoryRef subcategory,
                                 GstRate gst, List<ProductImage> images, List<ProductSize> sizes,

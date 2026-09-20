@@ -31,7 +31,7 @@ class CatalogControllerTest {
     @Test
     void returnsPagedProductCards() throws Exception {
         var card = new ProductCard(1, "MB-1", "blue-tee", "Blue Tee", 1_000, 800L,
-                800, 20, "/blue.jpg", true, true, false, true,
+                800, 20, "/blue.jpg", 4.5, 12, true, true, false, true,
                 new CategoryRef(2, "Clothing", "clothing"), new SubcategoryRef(3, "Tees", "tees"));
         when(catalog.products(any())).thenReturn(PageResponse.of(List.of(card), 0, 20, 1));
 
@@ -76,7 +76,7 @@ class CatalogControllerTest {
     @Test
     void returnsProductDetailBySlug() throws Exception {
         var detail = new ProductDetail(1, "MB-1", "blue-tee", "Blue Tee", "Soft", "Cotton", "Blue",
-                1_000, null, 1_000, null, true, false, true, false, 7,
+                1_000, null, 1_000, null, 4.5, 12, true, false, true, false, 7,
                 new CategoryRef(2, "Clothing", "clothing"), new SubcategoryRef(3, "Tees", "tees"),
                 null, List.of(new ProductImage(4, "/blue.jpg", true)),
                 List.of(new ProductSize("M", true)), List.of(), null);
