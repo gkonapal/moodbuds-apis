@@ -41,9 +41,9 @@ public class ConsolidatedProductService {
         var p=productParams(request.product(),slug,adminId,publish);
         var holder=new GeneratedKeyHolder();
         namedJdbc.update("""
-            INSERT INTO products(sku,name,slug,category_id,subcategory_id,gst_rate_id,description,fabric_details,color_name,price,discount_price,
+            INSERT INTO products(sku,name,slug,category_id,subcategory_id,gst_rate_id,description,fabric_details,color_name,color_hex,price,discount_price,
               weight_grams,length_cm,width_cm,height_cm,is_featured,is_new_arrival,is_best_seller,return_window_days,is_active,publication_status,published_at,created_by,updated_by,created_at,updated_at)
-            VALUES(:sku,:name,:slug,:category,:subcategory,:gst,:description,:fabric,:color,:price,:discount,:weight,:length,:width,:height,
+            VALUES(:sku,:name,:slug,:category,:subcategory,:gst,:description,:fabric,:color,:colorHex,:price,:discount,:weight,:length,:width,:height,
               :featured,:newArrival,:bestSeller,:returnDays,:active,:status,:publishedAt,:admin,:admin,UTC_TIMESTAMP(),UTC_TIMESTAMP())
             """,p,holder,new String[]{"id"});
         long id=holder.getKey().longValue();
@@ -63,7 +63,7 @@ public class ConsolidatedProductService {
         var p=productParams(request.product(),slug,adminId,publish).addValue("id",id);
         namedJdbc.update("""
             UPDATE products SET sku=:sku,name=:name,slug=:slug,category_id=:category,subcategory_id=:subcategory,gst_rate_id=:gst,
-              description=:description,fabric_details=:fabric,color_name=:color,price=:price,discount_price=:discount,weight_grams=:weight,
+              description=:description,fabric_details=:fabric,color_name=:color,color_hex=:colorHex,price=:price,discount_price=:discount,weight_grams=:weight,
               length_cm=:length,width_cm=:width,height_cm=:height,is_featured=:featured,is_new_arrival=:newArrival,is_best_seller=:bestSeller,
               return_window_days=:returnDays,is_active=:active,publication_status=:status,published_at=:publishedAt,updated_by=:admin,updated_at=UTC_TIMESTAMP()
             WHERE id=:id
@@ -190,17 +190,18 @@ public class ConsolidatedProductService {
     private MapSqlParameterSource productParams(ProductInput p,String slug,long adminId,boolean publish){
         return new MapSqlParameterSource().addValue("sku",p.sku().trim()).addValue("name",p.name().trim()).addValue("slug",slug)
                 .addValue("category",p.categoryId()).addValue("subcategory",p.subcategoryId()).addValue("gst",p.gstRateId())
-                .addValue("description",p.description()).addValue("fabric",p.fabricDetails()).addValue("color",p.colorName()).addValue("price",p.price())
+                .addValue("description",p.description()).addValue("fabric",p.fabricDetails()).addValue("color",p.colorName()).addValue("colorHex",normalizeHex(p.colorHex())).addValue("price",p.price())
                 .addValue("discount",p.discountPrice()).addValue("weight",p.weightGrams()).addValue("length",p.lengthCm()).addValue("width",p.widthCm()).addValue("height",p.heightCm())
                 .addValue("featured",p.featured()).addValue("newArrival",p.newArrival()).addValue("bestSeller",p.bestSeller()).addValue("returnDays",p.returnWindowDays())
                 .addValue("active",publish).addValue("status",publish?"PUBLISHED":"DRAFT").addValue("publishedAt",publish?LocalDateTime.now(java.time.Clock.systemUTC()):null).addValue("admin",adminId);
     }
     private ProductView productView(ResultSet rs,int n)throws SQLException{
         return new ProductView(rs.getLong("id"),rs.getString("sku"),rs.getString("name"),rs.getString("slug"),rs.getLong("category_id"),rs.getLong("subcategory_id"),rs.getLong("gst_rate_id"),
-                rs.getString("description"),rs.getString("fabric_details"),rs.getString("color_name"),rs.getLong("price"),nullableLong(rs,"discount_price"),nullableLong(rs,"weight_grams"),
+                rs.getString("description"),rs.getString("fabric_details"),rs.getString("color_name"),rs.getString("color_hex"),rs.getLong("price"),nullableLong(rs,"discount_price"),nullableLong(rs,"weight_grams"),
                 rs.getBigDecimal("length_cm"),rs.getBigDecimal("width_cm"),rs.getBigDecimal("height_cm"),rs.getBoolean("is_featured"),rs.getBoolean("is_new_arrival"),rs.getBoolean("is_best_seller"),rs.getInt("return_window_days"),
                 PublicationStatus.valueOf(rs.getString("publication_status")),rs.getObject("published_at",LocalDateTime.class),rs.getObject("created_at",LocalDateTime.class),rs.getObject("updated_at",LocalDateTime.class));
     }
+    private String normalizeHex(String colorHex){return colorHex==null||colorHex.isBlank()?null:colorHex.trim().toUpperCase(java.util.Locale.ROOT);}
     private Long nullableLong(ResultSet rs,String column)throws SQLException{long value=rs.getLong(column);return rs.wasNull()?null:value;}
     private record ExistingImage(long id,Long mediaId,String imageUrl) {}
 }

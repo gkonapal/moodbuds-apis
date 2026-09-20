@@ -45,7 +45,7 @@ public class CartService {
                 SELECT ci.id,ci.product_id,ci.size,ci.quantity,ci.unit_price,ci.unit_discount_price,
                        p.sku,p.slug,p.name,p.price,p.discount_price,(p.is_active=1 AND p.publication_status='PUBLISHED') is_active,
                        c.is_active category_active,sc.is_active subcategory_active,
-                       g.gst_percentage,g.is_active gst_active,
+                       g.rate_percentage,g.is_active gst_active,
                        ps.id product_size_id,ps.stock_quantity,ps.is_available size_active,
                        (SELECT pi.image_url FROM product_images pi WHERE pi.product_id=p.id
                         ORDER BY pi.is_primary DESC,pi.id LIMIT 1) primary_image_url
@@ -372,7 +372,7 @@ public class CartService {
         return new ItemRow(rs.getLong("id"), rs.getLong("product_id"), rs.getString("sku"), rs.getString("slug"),
                 rs.getString("name"), rs.getString("primary_image_url"), rs.getString("size"), rs.getInt("quantity"),
                 rs.getLong("unit_price"), nullableLong(rs, "unit_discount_price"), rs.getLong("price"),
-                nullableLong(rs, "discount_price"), rs.getBigDecimal("gst_percentage"), rs.getBoolean("is_active"),
+                nullableLong(rs, "discount_price"), rs.getBigDecimal("rate_percentage"), rs.getBoolean("gst_active"),
                 rs.getBoolean("category_active"), rs.getBoolean("subcategory_active"), rs.getBoolean("gst_active"),
                 productSizeId, rs.getInt("stock_quantity"), rs.getBoolean("size_active"));
     }

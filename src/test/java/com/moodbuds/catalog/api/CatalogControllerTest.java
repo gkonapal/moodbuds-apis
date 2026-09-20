@@ -75,7 +75,7 @@ class CatalogControllerTest {
 
     @Test
     void returnsProductDetailBySlug() throws Exception {
-        var detail = new ProductDetail(1, "MB-1", "blue-tee", "Blue Tee", "Soft", "Cotton", "Blue",
+        var detail = new ProductDetail(1, "MB-1", "blue-tee", "Blue Tee", "Soft", "Cotton", "Blue", "#0000FF",
                 1_000, null, 1_000, null, 4.5, 12, true, false, true, false, 7,
                 new CategoryRef(2, "Clothing", "clothing"), new SubcategoryRef(3, "Tees", "tees"),
                 null, List.of(new ProductImage(4, "/blue.jpg", true)),

@@ -126,13 +126,13 @@ public class CatalogService {
 
     public ProductDetail product(String slug) {
         var base = jdbc.sql("""
-                SELECT p.id,p.sku,p.slug,p.name,p.description,p.fabric_details,p.color_name,
+                SELECT p.id,p.sku,p.slug,p.name,p.description,p.fabric_details,p.color_name,p.color_hex,
                        p.price,p.discount_price,p.is_featured,p.is_new_arrival,p.is_best_seller,
                        COALESCE((SELECT ROUND(AVG(pr.rating),1) FROM product_reviews pr WHERE pr.product_id=p.id),0) average_rating,
                        (SELECT COUNT(*) FROM product_reviews pr WHERE pr.product_id=p.id) review_count,
                        p.return_window_days,c.id category_id,c.name category_name,c.slug category_slug,
                        sc.id subcategory_id,sc.name subcategory_name,sc.slug subcategory_slug,
-                       g.rate_name gst_name,g.gst_percentage rate_percentage,
+                       g.name gst_name,g.hsn_code,g.rate_percentage,
                        EXISTS(SELECT 1 FROM product_sizes ps WHERE ps.product_id=p.id
                               AND ps.is_available=1 AND ps.stock_quantity>0) in_stock
                 FROM products p
@@ -258,7 +258,16 @@ public class CatalogService {
     private List<ProductSize> sizes(long productId) {
         return jdbc.sql("""
                 SELECT size,(is_available=1 AND stock_quantity>0) in_stock
-                FROM product_sizes WHERE product_id=:id ORDER BY id
+                FROM product_sizes WHERE product_id=:id
+                ORDER BY CASE UPPER(TRIM(size))
+                    WHEN 'XS' THEN 1
+                    WHEN 'S' THEN 2
+                    WHEN 'M' THEN 3
+                    WHEN 'L' THEN 4
+                    WHEN 'XL' THEN 5
+                    WHEN 'XXL' THEN 6
+                    ELSE 999
+                END, size, id
                 """).param("id", productId).query((rs, rowNum) -> new ProductSize(
                         rs.getString("size"), rs.getBoolean("in_stock"))).list();
     }
@@ -308,9 +317,9 @@ public class CatalogService {
         long price = rs.getLong("price");
         Long discount = nullableLong(rs, "discount_price");
         GstRate gst = rs.getString("gst_name") == null ? null
-                : new GstRate(rs.getString("gst_name"), null, rs.getString("rate_percentage"));
+                : new GstRate(rs.getString("gst_name"), rs.getString("hsn_code"), rs.getString("rate_percentage"));
         return new ProductBase(rs.getLong("id"), rs.getString("sku"), rs.getString("slug"), rs.getString("name"),
-                rs.getString("description"), rs.getString("fabric_details"), rs.getString("color_name"),
+                rs.getString("description"), rs.getString("fabric_details"), rs.getString("color_name"), rs.getString("color_hex"),
                 price, discount, rs.getDouble("average_rating"), rs.getLong("review_count"),
                 rs.getBoolean("in_stock"), rs.getBoolean("is_featured"),
                 rs.getBoolean("is_new_arrival"), rs.getBoolean("is_best_seller"), rs.getInt("return_window_days"),
@@ -326,12 +335,12 @@ public class CatalogService {
     private record ProductIdentity(long id, String slug) {}
 
     private record ProductBase(long id, String sku, String slug, String name, String description,
-                               String fabricDetails, String colorName, long price, Long discountPrice,
+                               String fabricDetails, String colorName, String colorHex, long price, Long discountPrice,
                                double averageRating, long reviewCount,
                                boolean inStock, boolean featured, boolean newArrival, boolean bestSeller,
                                int returnWindowDays, CategoryRef category, SubcategoryRef subcategory, GstRate gst) {
         ProductDetail detail(List<ProductImage> images, List<ProductSize> sizes, List<MoodRef> moods, SizeChart chart) {
-            return new ProductDetail(id, sku, slug, name, description, fabricDetails, colorName, price, discountPrice,
+            return new ProductDetail(id, sku, slug, name, description, fabricDetails, colorName, colorHex, price, discountPrice,
                     CatalogPricing.effectivePrice(price, discountPrice), CatalogPricing.discountPercent(price, discountPrice),
                     averageRating, reviewCount,
                     inStock, featured, newArrival, bestSeller, returnWindowDays, category, subcategory,

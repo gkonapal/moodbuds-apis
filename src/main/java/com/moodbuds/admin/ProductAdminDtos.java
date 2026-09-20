@@ -11,6 +11,7 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 public final class ProductAdminDtos {
@@ -43,6 +44,7 @@ public final class ProductAdminDtos {
             String description,
             @Size(max=500) String fabricDetails,
             @Size(max=100) String colorName,
+            @Pattern(regexp="^#[0-9A-Fa-f]{6}$", message="Colour hex must use #RRGGBB format") String colorHex,
             @Positive long price,
             @Positive Long discountPrice,
             @Positive Long weightGrams,
@@ -65,7 +67,7 @@ public final class ProductAdminDtos {
     public record CompleteProductResponse(ProductView product,List<SizeView> sizes,List<ImageView> images,
                                           List<Long> moodIds,SizeChartView sizeChart) {}
     public record ProductView(long id,String sku,String name,String slug,long categoryId,long subcategoryId,long gstRateId,
-                              String description,String fabricDetails,String colorName,long price,Long discountPrice,
+                              String description,String fabricDetails,String colorName,String colorHex,long price,Long discountPrice,
                               Long weightGrams,BigDecimal lengthCm,BigDecimal widthCm,BigDecimal heightCm,
                               boolean featured,boolean newArrival,boolean bestSeller,int returnWindowDays,
                               PublicationStatus publicationStatus,LocalDateTime publishedAt,LocalDateTime createdAt,LocalDateTime updatedAt) {}
