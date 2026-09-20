@@ -44,4 +44,22 @@ public record ProductSearchCriteria(
                 .distinct()
                 .toList();
     }
+
+    public List<String> categories() {
+        if (category == null) return List.of();
+        return Arrays.stream(category.split(","))
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .distinct()
+                .toList();
+    }
+
+    public List<String> subcategories() {
+        if (subcategory == null) return List.of();
+        return Arrays.stream(subcategory.split(","))
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .distinct()
+                .toList();
+    }
 }
