@@ -1,0 +1,7 @@
+moodbuds:
+  razorpay:
+    mode: MOCK
+  shipping:
+    mode: MOCK
+    pricing: FREE
+    webhook-token: moodbuds-dev-shiprocket-webhook

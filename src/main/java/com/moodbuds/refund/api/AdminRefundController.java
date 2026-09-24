@@ -66,6 +66,10 @@ public class AdminRefundController {
         return refunds.adminRefunds(page, size);
     }
 
+    @GetMapping("/refunds/config")
+    @PreAuthorize("hasAuthority('returns.read') or hasRole('SUPER_ADMIN')")
+    Map<String, String> config() { return Map.of("mode", refunds.providerMode()); }
+
     @GetMapping("/refunds/{refundId}")
     @PreAuthorize("hasAuthority('returns.read') or hasRole('SUPER_ADMIN')")
     @Operation(summary = "Get refund status")
@@ -81,13 +85,24 @@ public class AdminRefundController {
         return result;
     }
 
+    @PostMapping("/refunds/{refundId}/mock")
+    @PreAuthorize("hasAuthority('returns.manage') or hasRole('SUPER_ADMIN')")
+    @Operation(summary = "Complete a development refund simulation")
+    RefundResponse completeMock(@PathVariable long refundId, @Valid @RequestBody MockRefundRequest request,
+                                @AuthenticationPrincipal Jwt jwt) {
+        var result = refunds.completeMock(refundId, request);
+        audit.record(CurrentAdmin.id(jwt), "refund.mock_completed", "refund", refundId, null,
+                Map.of("outcome", request.outcome().name(), "status", result.status().name()));
+        return result;
+    }
+
     @PatchMapping("/returns/{returnId}/items/{returnItemId}/inspection")
     @PreAuthorize("hasAuthority('returns.manage') or hasRole('SUPER_ADMIN')")
     @Operation(summary = "Record the warehouse condition of a received return item")
     Map<String, Object> inspect(@PathVariable long returnId, @PathVariable long returnItemId,
                                 @Valid @RequestBody InspectReturnItemRequest request,
                                 @AuthenticationPrincipal Jwt jwt) {
-        var result = store.inspect(returnId, returnItemId, request.condition());
+        var result = store.inspect(returnId, returnItemId, request.condition(), CurrentAdmin.id(jwt));
         audit.record(CurrentAdmin.id(jwt), "return.item_inspected", "return_item", returnItemId,
                 null, Map.of("condition", request.condition().name()));
         return result;

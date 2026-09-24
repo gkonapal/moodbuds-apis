@@ -4,6 +4,7 @@ import java.time.Instant;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.Pattern;
 
 public final class PaymentDtos {
     private PaymentDtos() {}
@@ -19,9 +20,14 @@ public final class PaymentDtos {
     public record RazorpayInitiationResponse(String orderNumber, long localPaymentId,
                                              String razorpayOrderId, String keyId,
                                              long amount, String currency, String paymentStatus,
+                                             String checkoutMode,
                                              String name, String description,
                                              CheckoutPrefill prefill, CheckoutTheme theme,
                                              Instant paymentExpiresAt) {}
+
+    public record MockPaymentRequest(
+            @NotBlank @Pattern(regexp = "SUCCESS|FAILED") String outcome,
+            @Pattern(regexp = "upi|card|netbanking|wallet") String method) {}
 
     public record PaymentStatusResponse(String orderNumber, String orderStatus, String gateway,
                                         String razorpayOrderId, String razorpayPaymentId,

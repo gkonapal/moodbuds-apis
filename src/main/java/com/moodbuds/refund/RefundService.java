@@ -22,14 +22,30 @@ public class RefundService {
 
     public RefundResponse initiate(long returnId, String idempotencyKey, InitiateRefundRequest request) {
         long refundId = store.prepare(returnId, idempotencyKey.trim(), request.speed());
-        return process(refundId);
+        return gateway.mockMode() ? store.adminRefund(refundId) : process(refundId);
     }
 
     public RefundResponse reconcile(long refundId) {
-        return process(refundId);
+        return gateway.mockMode() ? store.adminRefund(refundId) : process(refundId);
     }
 
+    public RefundResponse completeMock(long refundId, MockRefundRequest request) {
+        if (!gateway.mockMode()) {
+            throw ApiException.notFound("Mock refund simulator");
+        }
+        var operation = store.recordAttempt(refundId);
+        if ("PROCESSED".equals(operation.status()) || "FAILED".equals(operation.status())) {
+            return store.adminRefund(refundId);
+        }
+        var provider = gateway.completeMockRefund(operation.gatewayPaymentId(), operation.amount(),
+                operation.speed().name(), request.outcome() == MockRefundOutcome.SUCCESS);
+        return store.apply(refundId, provider);
+    }
+
+    public String providerMode() { return gateway.mode(); }
+
     public RefundResponse process(long refundId) {
+        if (gateway.mockMode()) return store.adminRefund(refundId);
         var operation = store.recordAttempt(refundId);
         if ("PROCESSED".equals(operation.status()) || "FAILED".equals(operation.status())) {
             return store.adminRefund(refundId);

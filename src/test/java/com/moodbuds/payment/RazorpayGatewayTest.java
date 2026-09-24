@@ -15,6 +15,18 @@ import org.springframework.web.client.RestClient;
 
 class RazorpayGatewayTest {
     @Test
+    void completesMockPaymentWithoutProviderCredentials() {
+        var gateway = new RazorpayGateway(new RazorpayProperties("MOCK", "", "", "",
+                "https://api.razorpay.com", "MoodBuds", "MoodBuds order", "#111827"), RestClient.builder());
+        var order = gateway.createOrder(12_300, "MB-MOCK", 1);
+
+        var payment = gateway.completeMockPayment(order.id(), true, "upi");
+
+        assertThat(payment.status()).isEqualTo("captured");
+        assertThat(gateway.fetchPaymentsForOrder(order.id())).containsExactly(payment);
+    }
+
+    @Test
     void createsProviderOrderUsingServerAmountAndReceipt() {
         var builder = RestClient.builder();
         var server = MockRestServiceServer.bindTo(builder).build();
@@ -97,7 +109,7 @@ class RazorpayGatewayTest {
     }
 
     private RazorpayProperties properties() {
-        return new RazorpayProperties("rzp_test_key", "test-secret", "https://razorpay.test",
+        return new RazorpayProperties("RAZORPAY", "rzp_test_key", "test-secret", "webhook-secret", "https://razorpay.test",
                 "MoodBuds", "MoodBuds order", "#111827");
     }
 }

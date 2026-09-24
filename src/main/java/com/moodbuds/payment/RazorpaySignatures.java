@@ -21,6 +21,17 @@ public final class RazorpaySignatures {
         }
     }
 
+    public static boolean verifyWebhook(String rawBody, String signature, String webhookSecret) {
+        if (rawBody == null || signature == null || webhookSecret == null || webhookSecret.isBlank()) return false;
+        try {
+            byte[] expected = HexFormat.of().parseHex(sign(rawBody, webhookSecret));
+            byte[] received = HexFormat.of().parseHex(signature);
+            return MessageDigest.isEqual(expected, received);
+        } catch (IllegalArgumentException exception) {
+            return false;
+        }
+    }
+
     static String sign(String payload, String secret) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");

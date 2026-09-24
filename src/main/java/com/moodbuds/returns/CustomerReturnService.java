@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.moodbuds.common.ApiException;
 import com.moodbuds.common.PageResponse;
 import com.moodbuds.customer.CustomerProfileService;
+import com.moodbuds.shipping.ShippingService;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -33,13 +34,16 @@ public class CustomerReturnService {
     private final NamedParameterJdbcTemplate namedJdbc;
     private final ObjectMapper objectMapper;
     private final CustomerProfileService customers;
+    private final ShippingService shipping;
 
     public CustomerReturnService(JdbcClient jdbc, NamedParameterJdbcTemplate namedJdbc,
-                                 ObjectMapper objectMapper, CustomerProfileService customers) {
+                                 ObjectMapper objectMapper, CustomerProfileService customers,
+                                 ShippingService shipping) {
         this.jdbc = jdbc;
         this.namedJdbc = namedJdbc;
         this.objectMapper = objectMapper;
         this.customers = customers;
+        this.shipping = shipping;
     }
 
     public ReturnEligibilityResponse eligibility(long customerId, String orderNumber) {
@@ -115,6 +119,12 @@ public class CustomerReturnService {
                     """).param("returnId", returnId).param("orderItemId", requested.orderItemId())
                     .param("quantity", requested.quantity()).param("reason", requested.reason().name()).update();
         }
+        jdbc.sql("""
+                INSERT INTO return_status_history(return_request_id,from_status,to_status,notes,reason,
+                    actor_type,actor_id,created_at)
+                VALUES(:returnId,NULL,'REQUESTED','Customer submitted a return request',NULL,
+                    'CUSTOMER',:customerId,UTC_TIMESTAMP())
+                """).param("returnId", returnId).param("customerId", customerId).update();
         if ("DELIVERED".equals(order.status())) {
             jdbc.sql("UPDATE orders SET status='RETURN_INITIATED',updated_at=UTC_TIMESTAMP() WHERE id=:id")
                     .param("id", order.id()).update();
@@ -127,24 +137,31 @@ public class CustomerReturnService {
         return get(customerId, returnId);
     }
 
-    public PageResponse<ReturnSummaryResponse> list(long customerId, ReturnStatus status, int page, int size) {
+    public PageResponse<ReturnSummaryResponse> list(long customerId, ReturnStatus status, String orderNumber,
+                                                    int page, int size) {
         customers.requireActive(customerId);
         int boundedSize = Math.min(Math.max(size, 1), 100);
         int boundedPage = Math.max(page, 0);
         String statusClause = status == null ? "" : " AND rr.status=:status";
+        String orderClause = orderNumber == null || orderNumber.isBlank() ? "" : " AND o.order_number=:orderNumber";
         var query = jdbc.sql("""
                 SELECT rr.id,o.order_number,rr.status,rr.reason,rr.requested_at,rr.updated_at,
                        COUNT(ri.id) item_count,COALESCE(SUM(ri.quantity_to_return),0) total_quantity
                 FROM return_requests rr JOIN orders o ON o.id=rr.order_id
                 LEFT JOIN return_items ri ON ri.return_request_id=rr.id
                 WHERE rr.user_id=:userId
-                """ + statusClause + " GROUP BY rr.id ORDER BY rr.id DESC LIMIT :limit OFFSET :offset")
+                """ + statusClause + orderClause + " GROUP BY rr.id ORDER BY rr.id DESC LIMIT :limit OFFSET :offset")
                 .param("userId", customerId).param("limit", boundedSize).param("offset", boundedPage * boundedSize);
-        var count = jdbc.sql("SELECT COUNT(*) FROM return_requests rr WHERE rr.user_id=:userId" + statusClause)
+        var count = jdbc.sql("SELECT COUNT(*) FROM return_requests rr JOIN orders o ON o.id=rr.order_id "
+                        + "WHERE rr.user_id=:userId" + statusClause + orderClause)
                 .param("userId", customerId);
         if (status != null) {
             query = query.param("status", status.name());
             count = count.param("status", status.name());
+        }
+        if (!orderClause.isEmpty()) {
+            query = query.param("orderNumber", orderNumber.trim());
+            count = count.param("orderNumber", orderNumber.trim());
         }
         var content = query.query((rs, rowNum) -> new ReturnSummaryResponse(rs.getLong("id"),
                 rs.getString("order_number"), ReturnStatus.valueOf(rs.getString("status")),
@@ -170,10 +187,28 @@ public class CustomerReturnService {
                         rs.getLong("order_item_id"), tree(rs.getString("product_snapshot")), rs.getString("size"),
                         rs.getInt("quantity_to_return"), ReturnItemReason.valueOf(rs.getString("reason")),
                         rs.getString("condition_on_receipt"))).list();
+        var history = jdbc.sql("""
+                SELECT id,from_status,to_status,notes,reason,actor_type,created_at
+                FROM return_status_history WHERE return_request_id=:id ORDER BY created_at,id
+                """).param("id", returnId).query((rs, rowNum) -> new ReturnHistoryResponse(
+                        rs.getLong("id"), rs.getString("from_status"), rs.getString("to_status"),
+                        rs.getString("notes"), rs.getString("reason"), rs.getString("actor_type"),
+                        instant(rs, "created_at"))).list();
+        var refund = jdbc.sql("""
+                SELECT id,amount,currency,status,provider_reference,failure_description,
+                       initiated_at,completed_at,updated_at
+                FROM refunds WHERE return_request_id=:id ORDER BY id DESC LIMIT 1
+                """).param("id", returnId).query((rs, rowNum) -> new ReturnRefundResponse(
+                        rs.getLong("id"), rs.getLong("amount"), rs.getString("currency"),
+                        rs.getString("status"), rs.getString("provider_reference"),
+                        rs.getString("failure_description"), instant(rs, "initiated_at"),
+                        nullableInstant(rs, "completed_at"), instant(rs, "updated_at")))
+                .optional().orElse(null);
         return new ReturnDetailResponse(row.id(), row.orderNumber(), ReturnStatus.valueOf(row.status()),
                 ReturnReason.valueOf(row.reason()), row.reasonDescription(), row.pickupAddressId(),
                 tree(row.pickupAddress()), tree(row.images()), row.adminNotes(), row.rejectionReason(),
-                items, row.requestedAt(), row.updatedAt());
+                items, history, refund, shipping.forReturn(customerId, returnId),
+                row.requestedAt(), row.updatedAt());
     }
 
     private List<ReturnItemEligibility> eligibilityItems(OrderRow order) {

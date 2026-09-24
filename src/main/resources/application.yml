@@ -37,8 +37,10 @@ moodbuds:
     customer-refresh-token-validity: ${MOODBUDS_CUSTOMER_REFRESH_TOKEN_VALIDITY:P30D}
     allowed-origins: ${MOODBUDS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173,http://localhost:5175}
   razorpay:
+    mode: ${MOODBUDS_PAYMENT_PROVIDER:DISABLED}
     key-id: ${MOODBUDS_RAZORPAY_KEY_ID:}
     key-secret: ${MOODBUDS_RAZORPAY_KEY_SECRET:}
+    webhook-secret: ${MOODBUDS_RAZORPAY_WEBHOOK_SECRET:}
     base-url: ${MOODBUDS_RAZORPAY_BASE_URL:https://api.razorpay.com}
     checkout-name: ${MOODBUDS_RAZORPAY_CHECKOUT_NAME:MoodBuds}
     checkout-description: ${MOODBUDS_RAZORPAY_CHECKOUT_DESCRIPTION:MoodBuds order}
@@ -52,6 +54,29 @@ moodbuds:
     polling-batch-size: ${MOODBUDS_REFUND_POLLING_BATCH_SIZE:100}
     polling-interval: ${MOODBUDS_REFUND_POLLING_INTERVAL:PT5M}
     polling-initial-delay: ${MOODBUDS_REFUND_POLLING_INITIAL_DELAY:PT1M}
+  shipping:
+    mode: ${MOODBUDS_SHIPPING_PROVIDER:DISABLED}
+    pricing: ${MOODBUDS_SHIPPING_PRICING:FREE}
+    flat-rate: ${MOODBUDS_SHIPPING_FLAT_RATE:0}
+    base-url: ${MOODBUDS_SHIPROCKET_BASE_URL:https://apiv2.shiprocket.in}
+    api-email: ${MOODBUDS_SHIPROCKET_API_EMAIL:}
+    api-password: ${MOODBUDS_SHIPROCKET_API_PASSWORD:}
+    pickup-location: ${MOODBUDS_SHIPROCKET_PICKUP_LOCATION:Primary}
+    origin-pincode: ${MOODBUDS_SHIPROCKET_ORIGIN_PINCODE:560001}
+    webhook-token: ${MOODBUDS_SHIPROCKET_WEBHOOK_TOKEN:}
+    channel-id: ${MOODBUDS_SHIPROCKET_CHANNEL_ID:}
+    quote-validity: ${MOODBUDS_SHIPPING_QUOTE_VALIDITY:PT15M}
+    default-weight-grams: ${MOODBUDS_SHIPPING_DEFAULT_WEIGHT_GRAMS:500}
+    default-length-cm: ${MOODBUDS_SHIPPING_DEFAULT_LENGTH_CM:25}
+    default-width-cm: ${MOODBUDS_SHIPPING_DEFAULT_WIDTH_CM:20}
+    default-height-cm: ${MOODBUDS_SHIPPING_DEFAULT_HEIGHT_CM:5}
+    warehouse-name: ${MOODBUDS_SHIPPING_WAREHOUSE_NAME:MoodBuds Returns}
+    warehouse-email: ${MOODBUDS_SHIPPING_WAREHOUSE_EMAIL:returns@moodbuds.local}
+    warehouse-phone: ${MOODBUDS_SHIPPING_WAREHOUSE_PHONE:9999999999}
+    warehouse-address: ${MOODBUDS_SHIPPING_WAREHOUSE_ADDRESS:MoodBuds Warehouse}
+    warehouse-city: ${MOODBUDS_SHIPPING_WAREHOUSE_CITY:Bengaluru}
+    warehouse-state: ${MOODBUDS_SHIPPING_WAREHOUSE_STATE:Karnataka}
+    warehouse-country: ${MOODBUDS_SHIPPING_WAREHOUSE_COUNTRY:India}
   media:
     root: ${MOODBUDS_MEDIA_ROOT:storage/media}
     max-image-size-bytes: ${MOODBUDS_MEDIA_MAX_IMAGE_BYTES:5242880}

@@ -2,12 +2,14 @@ package com.moodbuds.order.api;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.List;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import com.moodbuds.shipping.ShippingDtos.ShipmentResponse;
 
 public final class OrderDtos {
     private OrderDtos() {}
@@ -26,7 +28,8 @@ public final class OrderDtos {
 
     public record OrderSummaryResponse(String orderNumber, OrderStatus status, PaymentMethod paymentMethod,
                                        int itemCount, int totalQuantity, String primaryImageUrl,
-                                       long totalAmount, boolean paymentRequired, Instant createdAt,
+                                       long totalAmount, boolean paymentRequired, LocalDate expectedDeliveryDate,
+                                       String shippingStatus, String courierName, Instant createdAt,
                                        Instant updatedAt, Instant paymentExpiresAt) {}
 
     public record OrderItemResponse(long id, long productId, JsonNode productSnapshot, String size,
@@ -44,6 +47,7 @@ public final class OrderDtos {
                                       long shippingCost, long gstAmount, long totalAmount,
                                       boolean paymentRequired, boolean shippingProviderPending,
                                       String shippingPricingStatus, String shippingPricingSource,
+                                      LocalDate expectedDeliveryDate, ShipmentResponse shipment,
                                       List<OrderItemResponse> items, List<OrderStatusEvent> statusHistory,
                                       List<PaymentSummary> payments, Instant createdAt, Instant updatedAt,
                                       Instant paymentExpiresAt, Instant cancelledAt, String cancellationReason,

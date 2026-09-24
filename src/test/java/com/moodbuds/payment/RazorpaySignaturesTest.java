@@ -13,4 +13,14 @@ class RazorpaySignaturesTest {
         assertThat(RazorpaySignatures.verifyPayment("order_123", "pay_changed", signature, "test-secret")).isFalse();
         assertThat(RazorpaySignatures.verifyPayment("order_123", "pay_456", "not-hex", "test-secret")).isFalse();
     }
+
+    @Test
+    void verifiesWebhookAgainstRawPayload() {
+        String body = "{\"event\":\"payment.captured\"}";
+        String signature = RazorpaySignatures.sign(body, "webhook-secret");
+
+        assertThat(RazorpaySignatures.verifyWebhook(body, signature, "webhook-secret")).isTrue();
+        assertThat(RazorpaySignatures.verifyWebhook(body + " ", signature, "webhook-secret")).isFalse();
+        assertThat(RazorpaySignatures.verifyWebhook(body, "not-hex", "webhook-secret")).isFalse();
+    }
 }

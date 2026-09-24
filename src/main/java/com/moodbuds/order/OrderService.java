@@ -25,6 +25,9 @@ import com.moodbuds.common.PageResponse;
 import com.moodbuds.coupon.CouponCalculations;
 import com.moodbuds.coupon.CouponService;
 import com.moodbuds.customer.CustomerProfileService;
+import com.moodbuds.payment.RazorpayGateway;
+import com.moodbuds.shipping.ShippingDtos.ShippingQuoteResponse;
+import com.moodbuds.shipping.ShippingService;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -42,10 +45,13 @@ public class OrderService {
     private final CouponService coupons;
     private final CustomerProfileService customers;
     private final OrderLifecycleProperties lifecycleProperties;
+    private final RazorpayGateway payments;
+    private final ShippingService shipping;
 
     public OrderService(JdbcClient jdbc, NamedParameterJdbcTemplate namedJdbc, ObjectMapper objectMapper,
                         CartService carts, CouponService coupons, CustomerProfileService customers,
-                        OrderLifecycleProperties lifecycleProperties) {
+                        OrderLifecycleProperties lifecycleProperties, RazorpayGateway payments,
+                        ShippingService shipping) {
         this.jdbc = jdbc;
         this.namedJdbc = namedJdbc;
         this.objectMapper = objectMapper;
@@ -53,11 +59,17 @@ public class OrderService {
         this.coupons = coupons;
         this.customers = customers;
         this.lifecycleProperties = lifecycleProperties;
+        this.payments = payments;
+        this.shipping = shipping;
     }
 
     @Transactional
     public OrderDetailResponse place(long customerId, String idempotencyKey, PlaceOrderRequest request) {
         customers.requireActive(customerId);
+        if (!payments.available()) {
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "PAYMENT_PROVIDER_UNAVAILABLE",
+                    "Online payment is not configured yet");
+        }
         if (request.paymentMethod() == PaymentMethod.COD) {
             throw new ApiException(HttpStatus.UNPROCESSABLE_ENTITY, "COD_NOT_AVAILABLE",
                     "Cash on delivery is not enabled yet");
@@ -98,10 +110,12 @@ public class OrderService {
         }
         var cart = couponState.cart();
         var totals = couponState.totals();
+        var shippingQuote = shipping.requireFreshQuote(customerId, request.addressId());
         lockAndRequireStock(cart.items());
 
         String orderNumber = generateOrderNumber();
-        long orderId = insertOrder(customerId, key, fingerprint, request, address, couponState, orderNumber);
+        long orderId = insertOrder(customerId, key, fingerprint, request, address, couponState,
+                shippingQuote, orderNumber);
         List<Long> discountAllocations = CouponCalculations.allocateDiscount(
                 cart.items().stream().map(CartItemResponse::lineSubtotal).toList(), totals.couponDiscount());
         for (int index = 0; index < cart.items().size(); index++) {
@@ -138,7 +152,11 @@ public class OrderService {
         String statusClause = status == null ? "" : " AND o.status=:status";
         var query = jdbc.sql("""
                 SELECT o.order_number,o.status,o.payment_method,o.total_amount,o.created_at,o.updated_at,
-                       o.payment_expires_at,
+                       o.payment_expires_at,o.expected_delivery_date,
+                       (SELECT s.status FROM shipments s WHERE s.order_id=o.id AND s.direction='FORWARD'
+                        ORDER BY s.id DESC LIMIT 1) shipping_status,
+                       (SELECT s.courier_name FROM shipments s WHERE s.order_id=o.id AND s.direction='FORWARD'
+                        ORDER BY s.id DESC LIMIT 1) courier_name,
                        COALESCE(SUM(oi.quantity),0) total_quantity,COUNT(oi.id) item_count,
                        (SELECT JSON_UNQUOTE(JSON_EXTRACT(oi2.product_snapshot,'$.primaryImageUrl'))
                         FROM order_items oi2 WHERE oi2.order_id=o.id ORDER BY oi2.id LIMIT 1) primary_image_url
@@ -157,6 +175,8 @@ public class OrderService {
                 rs.getInt("item_count"), rs.getInt("total_quantity"), rs.getString("primary_image_url"),
                 rs.getLong("total_amount"), paymentRequired(rs.getString("status"), rs.getString("payment_method"),
                         instant(rs, "payment_expires_at")),
+                nullableDate(rs, "expected_delivery_date"), rs.getString("shipping_status"),
+                rs.getString("courier_name"),
                 instant(rs, "created_at"), instant(rs, "updated_at"), instant(rs, "payment_expires_at"))).list();
         return PageResponse.of(content, boundedPage, boundedSize, count.query(Long.class).single());
     }
@@ -191,15 +211,16 @@ public class OrderService {
         return new OrderDetailResponse(order.orderNumber(), OrderStatus.valueOf(order.status()),
                 paymentMethod(order.paymentMethod()), json(order.addressSnapshot()), order.couponCode(),
                 order.subtotal(), order.couponDiscount(), order.shippingCost(), order.gstAmount(), order.totalAmount(),
-                paymentRequired(order.status(), order.paymentMethod(), order.paymentExpiresAt()), true,
-                order.shippingPricingStatus(), order.shippingPricingSource(), items, history, payments,
+                paymentRequired(order.status(), order.paymentMethod(), order.paymentExpiresAt()), false,
+                order.shippingPricingStatus(), order.shippingPricingSource(), order.expectedDeliveryDate(),
+                shipping.forOrder(customerId, orderNumber), items, history, payments,
                 order.createdAt(), order.updatedAt(), order.paymentExpiresAt(), order.cancelledAt(),
                 order.cancellationReason(), directlyCancellable(order.status()));
     }
 
     private long insertOrder(long customerId, String key, String fingerprint, PlaceOrderRequest request,
                              Object address, com.moodbuds.coupon.api.CouponDtos.CartCouponResponse couponState,
-                             String orderNumber) {
+                             ShippingQuoteResponse shippingQuote, String orderNumber) {
         var totals = couponState.totals();
         var params = new MapSqlParameterSource().addValue("orderNumber", orderNumber)
                 .addValue("userId", customerId).addValue("key", key).addValue("fingerprint", fingerprint)
@@ -207,17 +228,22 @@ public class OrderService {
                 .addValue("paymentMethod", request.paymentMethod() == null ? null : request.paymentMethod().name(), Types.VARCHAR)
                 .addValue("couponId", couponState.applied() ? couponState.coupon().id() : null, Types.BIGINT)
                 .addValue("subtotal", totals.sellingSubtotal()).addValue("couponDiscount", totals.couponDiscount())
-                .addValue("gst", totals.gstAmount()).addValue("total", totals.grandTotal())
+                .addValue("shippingCost", shippingQuote.customerShippingCost())
+                .addValue("quoteId", shippingQuote.quoteId())
+                .addValue("eta", shippingQuote.estimatedDeliveryDate(), Types.DATE)
+                .addValue("shippingSource", shippingQuote.providerMode())
+                .addValue("gst", totals.gstAmount())
+                .addValue("total", totals.grandTotal() + shippingQuote.customerShippingCost())
                 .addValue("paymentExpiresAt", Instant.now().plus(lifecycleProperties.paymentTimeout()));
         var keys = new GeneratedKeyHolder();
         namedJdbc.update("""
                 INSERT INTO orders(order_number,user_id,idempotency_key,idempotency_fingerprint,status,
                     shipping_address_id,shipping_address_snapshot_full,payment_method,coupon_id,subtotal,
                     coupon_discount,shipping_cost,shipping_pricing_status,shipping_pricing_source,
-                    gst_amount,total_amount,payment_expires_at,created_at,updated_at)
+                    shipping_quote_id,expected_delivery_date,gst_amount,total_amount,payment_expires_at,created_at,updated_at)
                 VALUES(:orderNumber,:userId,:key,:fingerprint,'PENDING_PAYMENT',:addressId,:address,
-                    :paymentMethod,:couponId,:subtotal,:couponDiscount,0,'FINALIZED','FREE_SHIPPING_TEMPORARY',
-                    :gst,:total,:paymentExpiresAt,UTC_TIMESTAMP(),UTC_TIMESTAMP())
+                    :paymentMethod,:couponId,:subtotal,:couponDiscount,:shippingCost,'FINALIZED',:shippingSource,
+                    :quoteId,:eta,:gst,:total,:paymentExpiresAt,UTC_TIMESTAMP(),UTC_TIMESTAMP())
                 """, params, keys, new String[]{"id"});
         return keys.getKey().longValue();
     }
@@ -294,6 +320,7 @@ public class OrderService {
                 rs.getString("coupon_code"), rs.getLong("subtotal"), rs.getLong("coupon_discount"),
                 rs.getLong("shipping_cost"), rs.getLong("gst_amount"), rs.getLong("total_amount"),
                 rs.getString("shipping_pricing_status"), rs.getString("shipping_pricing_source"),
+                nullableDate(rs, "expected_delivery_date"),
                 instant(rs, "created_at"), instant(rs, "updated_at"), instant(rs, "payment_expires_at"),
                 nullableInstant(rs, "cancelled_at"), rs.getString("cancellation_reason"));
     }
@@ -340,6 +367,9 @@ public class OrderService {
     private static Long nullableLong(ResultSet rs, String field) throws SQLException {
         long value = rs.getLong(field); return rs.wasNull() ? null : value;
     }
+    private static java.time.LocalDate nullableDate(ResultSet rs, String field) throws SQLException {
+        var value = rs.getDate(field); return value == null ? null : value.toLocalDate();
+    }
 
     private record ExistingOrder(String orderNumber, String fingerprint) {}
     private record Stock(int quantity, boolean available) {}
@@ -347,6 +377,7 @@ public class OrderService {
                             String addressSnapshot, String couponCode, long subtotal, long couponDiscount,
                             long shippingCost, long gstAmount, long totalAmount,
                             String shippingPricingStatus, String shippingPricingSource,
+                            java.time.LocalDate expectedDeliveryDate,
                             Instant createdAt, Instant updatedAt, Instant paymentExpiresAt,
                             Instant cancelledAt, String cancellationReason) {}
 }

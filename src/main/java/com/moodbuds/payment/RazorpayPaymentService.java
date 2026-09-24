@@ -10,9 +10,12 @@ import java.util.List;
 import java.util.Locale;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.moodbuds.common.ApiException;
 import com.moodbuds.customer.CustomerProfileService;
+import com.moodbuds.shipping.OrderConfirmedEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -29,16 +32,19 @@ public class RazorpayPaymentService {
     private final RazorpayGateway gateway;
     private final RazorpayProperties properties;
     private final CustomerProfileService customers;
+    private final ApplicationEventPublisher events;
 
     public RazorpayPaymentService(JdbcClient jdbc, NamedParameterJdbcTemplate namedJdbc,
                                   ObjectMapper objectMapper, RazorpayGateway gateway,
-                                  RazorpayProperties properties, CustomerProfileService customers) {
+                                  RazorpayProperties properties, CustomerProfileService customers,
+                                  ApplicationEventPublisher events) {
         this.jdbc = jdbc;
         this.namedJdbc = namedJdbc;
         this.objectMapper = objectMapper;
         this.gateway = gateway;
         this.properties = properties;
         this.customers = customers;
+        this.events = events;
     }
 
     @Transactional
@@ -106,6 +112,64 @@ public class RazorpayPaymentService {
         return status(order, latestPayment(order.id()));
     }
 
+    @Transactional
+    public PaymentStatusResponse completeMock(long customerId, String orderNumber, MockPaymentRequest request) {
+        customers.requireActive(customerId);
+        if (!gateway.mockMode()) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "MOCK_PAYMENT_DISABLED", "Mock payments are disabled");
+        }
+        OrderPaymentRow order = lockOrder(customerId, orderNumber);
+        requirePayable(order);
+        PaymentRow payment = latestPayment(order.id());
+        if (payment == null || payment.gatewayOrderId() == null) {
+            throw new ApiException(HttpStatus.CONFLICT, "PAYMENT_NOT_INITIATED", "Initiate payment before completing it");
+        }
+        var provider = gateway.completeMockPayment(payment.gatewayOrderId(),
+                "SUCCESS".equals(request.outcome()), request.method());
+        return applyProviderPayment(order, payment, provider);
+    }
+
+    @Transactional
+    public void processWebhook(String eventId, String signature, String rawBody) {
+        if (properties.webhookSecret() == null || properties.webhookSecret().isBlank()) {
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "RAZORPAY_WEBHOOK_NOT_CONFIGURED",
+                    "Razorpay webhook verification is not configured");
+        }
+        if (!RazorpaySignatures.verifyWebhook(rawBody, signature, properties.webhookSecret())) {
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "INVALID_WEBHOOK_SIGNATURE",
+                    "Razorpay webhook signature verification failed");
+        }
+        JsonNode payload;
+        try { payload = objectMapper.readTree(rawBody); }
+        catch (JsonProcessingException exception) {
+            throw ApiException.badRequest("INVALID_WEBHOOK_PAYLOAD", "Razorpay webhook payload is invalid");
+        }
+        String eventType = payload.path("event").asText("");
+        int inserted = jdbc.sql("""
+                INSERT IGNORE INTO payment_webhook_events(provider,provider_event_id,event_type,payload,received_at)
+                VALUES('RAZORPAY',:eventId,:eventType,:payload,UTC_TIMESTAMP())
+                """).param("eventId", eventId).param("eventType", eventType).param("payload", rawBody).update();
+        if (inserted == 0) return;
+
+        if (List.of("payment.captured", "payment.failed", "order.paid").contains(eventType)) {
+            JsonNode entity = payload.path("payload").path("payment").path("entity");
+            String gatewayOrderId = entity.path("order_id").asText(null);
+            String paymentId = entity.path("id").asText(null);
+            if (gatewayOrderId != null && paymentId != null) {
+                OrderPaymentRow order = lockOrderByGatewayOrder(gatewayOrderId);
+                PaymentRow payment = paymentByGatewayOrder(order.id(), gatewayOrderId);
+                var provider = new RazorpayGateway.ProviderPayment(paymentId, gatewayOrderId,
+                        entity.path("amount").asLong(), entity.path("currency").asText(),
+                        entity.path("status").asText(), entity.path("method").asText(null), entity);
+                applyProviderPayment(order, payment, provider);
+            }
+        }
+        jdbc.sql("""
+                UPDATE payment_webhook_events SET processed_at=UTC_TIMESTAMP()
+                WHERE provider='RAZORPAY' AND provider_event_id=:eventId
+                """).param("eventId", eventId).update();
+    }
+
     private PaymentStatusResponse applyProviderPayment(OrderPaymentRow order, PaymentRow local,
                                                         RazorpayGateway.ProviderPayment provider) {
         if (!local.gatewayOrderId().equals(provider.orderId()) || provider.amount() != order.totalAmount()
@@ -139,6 +203,15 @@ public class RazorpayPaymentService {
                     VALUES(:orderId,:fromStatus,'CONFIRMED','Razorpay captured payment verified',NULL,UTC_TIMESTAMP())
                     """).param("orderId", order.id()).param("fromStatus", order.status()).update();
             order = order.withStatus("CONFIRMED", method);
+            events.publishEvent(new OrderConfirmedEvent(order.id()));
+        } else if ("FAILED".equals(localStatus) && "PENDING_PAYMENT".equals(order.status())) {
+            jdbc.sql("UPDATE orders SET status='PAYMENT_FAILED',updated_at=UTC_TIMESTAMP() WHERE id=:id")
+                    .param("id", order.id()).update();
+            jdbc.sql("""
+                    INSERT INTO order_status_history(order_id,from_status,to_status,notes,changed_by_id,created_at)
+                    VALUES(:orderId,'PENDING_PAYMENT','PAYMENT_FAILED','Payment attempt failed',NULL,UTC_TIMESTAMP())
+                    """).param("orderId", order.id()).update();
+            order = order.withStatus("PAYMENT_FAILED", order.paymentMethod());
         }
         return status(order, payment(local.id()));
     }
@@ -164,6 +237,7 @@ public class RazorpayPaymentService {
     private RazorpayInitiationResponse initiation(OrderPaymentRow order, PaymentRow payment) {
         return new RazorpayInitiationResponse(order.orderNumber(), payment.id(), payment.gatewayOrderId(),
                 gateway.publicKeyId(), payment.amount(), payment.currency(), payment.status(),
+                gateway.mockMode() ? "MOCK" : "RAZORPAY",
                 properties.checkoutName(), properties.checkoutDescription() + " " + order.orderNumber(),
                 new CheckoutPrefill(order.customerName(), order.email(), order.mobile()),
                 new CheckoutTheme(properties.themeColor()), order.paymentExpiresAt());
@@ -183,6 +257,22 @@ public class RazorpayPaymentService {
 
     private OrderPaymentRow lockOrder(long customerId, String orderNumber) {
         return order(customerId, orderNumber, true);
+    }
+
+    private OrderPaymentRow lockOrderByGatewayOrder(String gatewayOrderId) {
+        return jdbc.sql("""
+                SELECT o.id,o.order_number,o.status,o.payment_method,o.total_amount,o.payment_expires_at,
+                       o.shipping_pricing_status,CONCAT(u.first_name,' ',u.last_name) customer_name,
+                       u.email,u.mobile
+                FROM payments p JOIN orders o ON o.id=p.order_id JOIN users u ON u.id=o.user_id
+                WHERE p.gateway_order_id=:gatewayOrderId FOR UPDATE
+                """).param("gatewayOrderId", gatewayOrderId)
+                .query((rs, rowNum) -> new OrderPaymentRow(rs.getLong("id"), rs.getString("order_number"),
+                        rs.getString("status"), rs.getString("payment_method"), rs.getLong("total_amount"),
+                        rs.getString("shipping_pricing_status"), rs.getString("customer_name"),
+                        rs.getString("email"), rs.getString("mobile"),
+                        rs.getTimestamp("payment_expires_at").toInstant())).optional()
+                .orElseThrow(() -> ApiException.notFound("Razorpay order"));
     }
 
     private OrderPaymentRow order(long customerId, String orderNumber, boolean lock) {

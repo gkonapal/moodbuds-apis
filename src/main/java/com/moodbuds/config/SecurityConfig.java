@@ -71,6 +71,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/v1/admin/auth/login", "/api/v1/quiz/**",
                                 "/api/v1/customer/auth/register", "/api/v1/customer/auth/login",
                                 "/api/v1/customer/auth/refresh",
+                                "/api/v1/payments/razorpay/webhook",
+                                "/api/v1/shipping/shiprocket/webhook",
                                 "/api/v1/home", "/api/v1/categories/**", "/api/v1/subcategories/**",
                                 "/api/v1/moods/**", "/api/v1/products/**", "/api/v1/coupons/**", "/api/v1/content/**", "/api/v1/media/**",
                                 "/actuator/health", "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()

@@ -57,4 +57,11 @@ public class RazorpayPaymentController {
     PaymentStatusResponse reconcile(@AuthenticationPrincipal Jwt jwt, @PathVariable String orderNumber) {
         return payments.reconcile(CurrentCustomer.id(jwt), orderNumber);
     }
+
+    @PostMapping("/mock")
+    @Operation(summary = "Complete a local mock payment; available only in explicit MOCK mode")
+    PaymentStatusResponse mock(@AuthenticationPrincipal Jwt jwt, @PathVariable String orderNumber,
+                               @Valid @RequestBody MockPaymentRequest request) {
+        return payments.completeMock(CurrentCustomer.id(jwt), orderNumber, request);
+    }
 }

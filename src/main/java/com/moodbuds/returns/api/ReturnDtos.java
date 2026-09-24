@@ -12,6 +12,7 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
+import com.moodbuds.shipping.ShippingDtos.ShipmentResponse;
 
 public final class ReturnDtos {
     private ReturnDtos() {}
@@ -52,10 +53,21 @@ public final class ReturnDtos {
     public record ReturnItemResponse(long id, long orderItemId, JsonNode productSnapshot, String size,
                                      int quantity, ReturnItemReason reason, String conditionOnReceipt) {}
 
+    public record ReturnHistoryResponse(long id, String fromStatus, String toStatus,
+                                        String notes, String reason, String actorType,
+                                        Instant createdAt) {}
+
+    public record ReturnRefundResponse(long id, long amount, String currency, String status,
+                                       String providerReference, String failureDescription,
+                                       Instant initiatedAt, Instant completedAt, Instant updatedAt) {}
+
     public record ReturnDetailResponse(long id, String orderNumber, ReturnStatus status,
                                        ReturnReason reason, String reasonDescription,
                                        long pickupAddressId, JsonNode pickupAddress,
                                        JsonNode images, String adminNotes, String rejectionReason,
                                        List<ReturnItemResponse> items,
+                                       List<ReturnHistoryResponse> history,
+                                       ReturnRefundResponse refund,
+                                       ShipmentResponse reverseShipment,
                                        Instant requestedAt, Instant updatedAt) {}
 }

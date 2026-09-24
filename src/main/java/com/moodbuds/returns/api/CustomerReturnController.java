@@ -55,9 +55,10 @@ public class CustomerReturnController {
     @Operation(summary = "List the authenticated customer's return requests")
     PageResponse<ReturnSummaryResponse> list(@AuthenticationPrincipal Jwt jwt,
                                              @RequestParam(required = false) ReturnStatus status,
+                                             @RequestParam(required = false) String orderNumber,
                                              @RequestParam(defaultValue = "0") int page,
                                              @RequestParam(defaultValue = "20") int size) {
-        return returns.list(CurrentCustomer.id(jwt), status, page, size);
+        return returns.list(CurrentCustomer.id(jwt), status, orderNumber, page, size);
     }
 
     @GetMapping("/returns/{returnId}")

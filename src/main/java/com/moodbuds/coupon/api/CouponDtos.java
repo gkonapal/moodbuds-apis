@@ -6,6 +6,7 @@ import java.util.List;
 
 import com.moodbuds.cart.api.CartDtos.CartResponse;
 import com.moodbuds.customer.api.CustomerDtos.AddressResponse;
+import com.moodbuds.shipping.ShippingDtos.ShippingQuoteResponse;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
@@ -47,6 +48,7 @@ public final class CouponDtos {
                                           boolean readyForOrderCreation, List<String> blockers,
                                           List<String> pendingIntegrations,
                                           AddressResponse shippingAddress,
+                                          ShippingQuoteResponse shipping,
                                           AppliedCouponResponse coupon, CouponTotals totals,
                                           CartResponse cart) {}
 }

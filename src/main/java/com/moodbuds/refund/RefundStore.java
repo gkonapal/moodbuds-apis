@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.moodbuds.common.ApiException;
 import com.moodbuds.common.PageResponse;
@@ -127,9 +128,11 @@ public class RefundStore {
 
         restockGoodItems(returned, items);
         jdbc.sql("""
-                UPDATE return_requests SET status='REFUND_INITIATED',inventory_restocked_at=COALESCE(
-                    inventory_restocked_at,UTC_TIMESTAMP()),updated_at=UTC_TIMESTAMP() WHERE id=:id
+                UPDATE return_requests SET inventory_restocked_at=COALESCE(
+                    inventory_restocked_at,UTC_TIMESTAMP()) WHERE id=:id
                 """).param("id", returnId).update();
+        transitionReturn(returnId, returned.returnStatus(), "REFUND_INITIATED",
+                "Refund initiated with the payment provider");
         transitionOrder(returned.orderId(), returned.orderStatus(), "REFUND_INITIATED",
                 "Return approved; refund initiated");
         return refundId;
@@ -167,8 +170,10 @@ public class RefundStore {
         };
         jdbc.sql("""
                 UPDATE refunds SET gateway_refund_id=:gatewayId,status=:status,speed_processed=:speedProcessed,
-                    provider_reference=:reference,gateway_response=:response,failure_code=NULL,
-                    failure_description=NULL,next_retry_at=CASE WHEN :status='INITIATED'
+                    provider_reference=:reference,gateway_response=:response,
+                    failure_code=CASE WHEN :status='FAILED' THEN 'PROVIDER_REFUND_FAILED' ELSE NULL END,
+                    failure_description=CASE WHEN :status='FAILED' THEN 'The refund was not processed by the payment provider' ELSE NULL END,
+                    next_retry_at=CASE WHEN :status='INITIATED'
                         THEN DATE_ADD(UTC_TIMESTAMP(),INTERVAL 5 MINUTE) ELSE NULL END,
                     last_reconciled_at=UTC_TIMESTAMP(),completed_at=CASE WHEN :status IN ('PROCESSED','FAILED')
                         THEN UTC_TIMESTAMP() ELSE NULL END,updated_at=UTC_TIMESTAMP() WHERE id=:id
@@ -176,6 +181,11 @@ public class RefundStore {
                 .param("speedProcessed", provider.speedProcessed()).param("reference", provider.providerReference())
                 .param("response", json(provider.raw())).param("id", refundId).update();
         if ("PROCESSED".equals(status)) complete(operation);
+        if ("FAILED".equals(status)) {
+            long returnId = jdbc.sql("SELECT return_request_id FROM refunds WHERE id=:id")
+                    .param("id", refundId).query(Long.class).single();
+            recordReturnEvent(returnId, "REFUND_INITIATED", "Refund attempt failed; retry is available", null, null);
+        }
         return response(refundId, null);
     }
 
@@ -190,7 +200,7 @@ public class RefundStore {
     }
 
     @Transactional
-    public Map<String, Object> inspect(long returnId, long returnItemId, ItemCondition condition) {
+    public Map<String, Object> inspect(long returnId, long returnItemId, ItemCondition condition, long adminId) {
         var request = jdbc.sql("SELECT status FROM return_requests WHERE id=:id FOR UPDATE")
                 .param("id", returnId).query(String.class).optional()
                 .orElseThrow(() -> ApiException.notFound("Return request"));
@@ -204,6 +214,8 @@ public class RefundStore {
                 """).param("condition", condition.name()).param("itemId", returnItemId)
                 .param("returnId", returnId).update();
         if (updated == 0) throw ApiException.notFound("Return item");
+        recordReturnEvent(returnId, "ITEM_RECEIVED", "Warehouse inspection recorded: " + condition.name(),
+                "ADMIN", adminId);
         return jdbc.sql("SELECT * FROM return_items WHERE id=:id").param("id", returnItemId).query().singleRow();
     }
 
@@ -249,13 +261,25 @@ public class RefundStore {
 
     private String refundSelect() {
         return """
-                SELECT r.*,o.order_number FROM refunds r JOIN orders o ON o.id=r.order_id
+                SELECT r.*,o.order_number,CONCAT(u.first_name,' ',u.last_name) customer_name,
+                       u.email customer_email,
+                       (SELECT oi.product_snapshot FROM refund_items fi
+                            JOIN return_items ri ON ri.id=fi.return_item_id
+                            JOIN order_items oi ON oi.id=ri.order_item_id
+                            WHERE fi.refund_id=r.id ORDER BY fi.id LIMIT 1) product_snapshot,
+                       (SELECT COUNT(*) FROM refund_items fi WHERE fi.refund_id=r.id) item_count,
+                       (SELECT COALESCE(SUM(ri.quantity_to_return),0) FROM refund_items fi
+                            JOIN return_items ri ON ri.id=fi.return_item_id
+                            WHERE fi.refund_id=r.id) total_quantity
+                FROM refunds r JOIN orders o ON o.id=r.order_id JOIN users u ON u.id=o.user_id
                 """;
     }
 
     private RefundResponse response(ResultSet rs) throws SQLException {
         return new RefundResponse(rs.getLong("id"), rs.getString("order_number"),
-                rs.getLong("return_request_id"), rs.getString("gateway_refund_id"), rs.getLong("amount"),
+                rs.getLong("return_request_id"), rs.getString("customer_name"), rs.getString("customer_email"),
+                tree(rs.getString("product_snapshot")), rs.getInt("item_count"), rs.getInt("total_quantity"),
+                rs.getString("gateway_refund_id"), rs.getLong("amount"),
                 rs.getString("currency"), RefundStatus.valueOf(rs.getString("status")),
                 RefundSpeed.valueOf(rs.getString("speed_requested")), rs.getString("speed_processed"),
                 rs.getString("provider_reference"), rs.getString("failure_code"),
@@ -340,8 +364,9 @@ public class RefundStore {
         String paymentStatus = refunded >= paymentAmount ? "REFUNDED" : "PARTIALLY_REFUNDED";
         jdbc.sql("UPDATE payments SET status=:status WHERE gateway_payment_id=:paymentId")
                 .param("status", paymentStatus).param("paymentId", operation.gatewayPaymentId()).update();
-        jdbc.sql("UPDATE return_requests rr JOIN refunds r ON r.return_request_id=rr.id SET rr.status='COMPLETED',rr.updated_at=UTC_TIMESTAMP() WHERE r.id=:id")
-                .param("id", operation.id()).update();
+        long returnId = jdbc.sql("SELECT return_request_id FROM refunds WHERE id=:id")
+                .param("id", operation.id()).query(Long.class).single();
+        transitionReturn(returnId, "REFUND_INITIATED", "COMPLETED", "Refund processed successfully");
         long orderId = ((Number) totals.get("order_id")).longValue();
         String orderStatus = refunded >= paymentAmount ? "REFUNDED" : "PARTIALLY_REFUNDED";
         String current = jdbc.sql("SELECT status FROM orders WHERE id=:id FOR UPDATE").param("id", orderId)
@@ -360,9 +385,35 @@ public class RefundStore {
                 .param("note", note).update();
     }
 
+    private void transitionReturn(long returnId, String from, String to, String note) {
+        if (to.equals(from)) return;
+        jdbc.sql("UPDATE return_requests SET status=:status,updated_at=UTC_TIMESTAMP() WHERE id=:id")
+                .param("status", to).param("id", returnId).update();
+        jdbc.sql("""
+                INSERT INTO return_status_history(return_request_id,from_status,to_status,notes,
+                    actor_type,created_at)
+                VALUES(:id,:from,:to,:note,'SYSTEM',UTC_TIMESTAMP())
+                """).param("id", returnId).param("from", from).param("to", to).param("note", note).update();
+    }
+
+    private void recordReturnEvent(long returnId, String status, String note, String actorType, Long actorId) {
+        jdbc.sql("""
+                INSERT INTO return_status_history(return_request_id,from_status,to_status,notes,
+                    actor_type,actor_id,created_at)
+                VALUES(:id,:status,:status,:note,:actorType,:actorId,UTC_TIMESTAMP())
+                """).param("id", returnId).param("status", status).param("note", note)
+                .param("actorType", actorType == null ? "SYSTEM" : actorType).param("actorId", actorId).update();
+    }
+
     private String json(Object value) {
         try { return objectMapper.writeValueAsString(value); }
         catch (JsonProcessingException exception) { throw new IllegalStateException("Could not persist provider response", exception); }
+    }
+
+    private JsonNode tree(String value) {
+        if (value == null) return null;
+        try { return objectMapper.readTree(value); }
+        catch (JsonProcessingException exception) { throw new IllegalStateException("Invalid persisted JSON", exception); }
     }
 
     private static Instant instant(ResultSet rs, String field) throws SQLException { return rs.getTimestamp(field).toInstant(); }

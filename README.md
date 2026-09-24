@@ -21,7 +21,8 @@ Spring Boot API for the existing MySQL `mb` database.
 - Returns with validated review/status transitions
 - Dashboard, sales, GST and inventory reports
 
-Payment/shipping providers, provider webhooks, OTP, blog, SEO and guest-cart APIs are intentionally excluded.
+OTP delivery, shipping providers, blog, SEO and guest-cart APIs are intentionally excluded. Razorpay payments,
+signed webhooks and a local payment simulator are implemented.
 
 ## Customer Authentication and Profile API
 
@@ -121,6 +122,25 @@ inspect usage, and assign `ASSIGNED_USERS` coupons to selected customers with op
 refund references, and assignment reasons. `MOOD300` is seeded as the single public, one-use,
 first-order homepage offer.
 
+## Shipping and Shiprocket
+
+Shipping uses a common gateway with `MOCK`, `SHIPROCKET`, and `DISABLED` modes. The development profile
+supports pincode serviceability, delivery estimates, courier/AWB booking, pickup scheduling, tracking
+transitions, and reverse pickups without external credentials. Production activation uses environment values:
+
+```powershell
+$env:MOODBUDS_SHIPPING_PROVIDER = 'SHIPROCKET'
+$env:MOODBUDS_SHIPROCKET_API_EMAIL = '<Shiprocket API user email>'
+$env:MOODBUDS_SHIPROCKET_API_PASSWORD = '<Shiprocket API user password>'
+$env:MOODBUDS_SHIPROCKET_PICKUP_LOCATION = '<Shiprocket pickup location name>'
+$env:MOODBUDS_SHIPROCKET_ORIGIN_PINCODE = '<warehouse pincode>'
+$env:MOODBUDS_SHIPROCKET_WEBHOOK_TOKEN = '<shared webhook token>'
+```
+
+`MOODBUDS_SHIPPING_PRICING` accepts `FREE`, `FLAT`, or `PROVIDER_RATE`; it defaults to `FREE`. Configure
+the Shiprocket shipment webhook to `POST /api/v1/shipping/shiprocket/webhook` and send the configured shared
+value in `X-Shiprocket-Token`.
+
 ## Customer Order API
 
 All order routes require a customer bearer token:
@@ -175,14 +195,28 @@ Required Test Mode configuration:
 ```powershell
 $env:MOODBUDS_RAZORPAY_KEY_ID = '<rzp_test key id>'
 $env:MOODBUDS_RAZORPAY_KEY_SECRET = '<test key secret>'
+$env:MOODBUDS_RAZORPAY_WEBHOOK_SECRET = '<dashboard webhook secret>'
+$env:MOODBUDS_PAYMENT_PROVIDER = 'RAZORPAY'
 ```
+
+Until Razorpay credentials are available, run with the local profile to use the explicit development simulator:
+
+```powershell
+$env:SPRING_PROFILES_ACTIVE = 'dev'
+```
+
+The simulator uses the same order, stock, coupon and payment state transitions but does not test Razorpay's
+hosted Checkout or signatures. Without either `MOCK` or fully configured `RAZORPAY` mode, checkout is blocked
+before an order is created or the cart is cleared.
 
 Optional display configuration includes `MOODBUDS_RAZORPAY_CHECKOUT_NAME`,
 `MOODBUDS_RAZORPAY_CHECKOUT_DESCRIPTION`, `MOODBUDS_RAZORPAY_THEME_COLOR`, and
 `MOODBUDS_RAZORPAY_BASE_URL`. Order lifecycle settings are configurable with
 `MOODBUDS_PAYMENT_TIMEOUT`, `MOODBUDS_PAYMENT_TIMEOUT_BATCH_SIZE`,
 `MOODBUDS_PAYMENT_TIMEOUT_SCAN_INTERVAL`, and `MOODBUDS_PAYMENT_TIMEOUT_SCAN_INITIAL_DELAY`.
-Payment webhooks remain deferred; payment reconciliation currently uses the provider API.
+Razorpay sends payment webhooks to `POST /api/v1/payments/razorpay/webhook`. The endpoint verifies the raw-body
+HMAC signature, deduplicates `X-Razorpay-Event-Id`, tolerates repeated delivery and applies captured/failed states
+through the same payment service used by Checkout verification.
 
 ## Customer Return API
 
